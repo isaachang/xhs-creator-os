@@ -1,0 +1,4 @@
+interface:
+  display_name: "小红书调研与仿写"
+  short_description: "SocialDataX 调研、完整样本输出与小红书笔记仿写"
+  default_prompt: "Use $xhs-creator-os to research Xiaohongshu notes with SocialDataX or rewrite a user-provided note URL."
