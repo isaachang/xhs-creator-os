@@ -34,19 +34,32 @@
 或者在当前项目中直接加载本目录的 `SKILL.md`。
 
 ### 2. 配置 Apify API Key
-| 链接：https://console.apify.com/
-⚠️ 首次使用有5次的免费调用额度
 
-<img width="1243" height="750" alt="Screenshot 2026-08-18 at 13 58 34" src="https://github.com/user-attachments/assets/60b034f0-5ff6-4778-8dcc-4782f8b9fa55" />
-配置默认小红书数据API Actor
+前往 [Apify Console](https://console.apify.com/) 创建或复制 API Key。
 
-复制示例文件：
+本 Skill 已经内置默认的小红书数据 Actor：
 
-```bash
-cp .env.example .env.local
+```text
+socialdatax~socialdatax-xhs-data-api
 ```
 
-然后编辑 `.env.local`：
+对应的 [SocialDataX XHS Actor](https://apify.com/socialdatax/socialdatax-xhs-data-api) 会被自动调用。正常使用时不需要在 Apify 页面手动选择 Actor，也不需要填写 Actor ID；用户只需要配置自己的 API Key。
+
+SocialDataX 按事件计费，实际能否调用取决于 Apify 当前套餐、Actor 权限和账户余额。余额不等同于套餐权限；如果出现“需要升级 Apify 账号”的提示，应先检查套餐权限。
+
+#### 方式 A：使用配置脚本（推荐）
+
+在 `xhs-creator-os` 目录下运行：
+
+```bash
+python3 scripts/setup_apify_key.py
+```
+
+脚本会隐藏输入内容，并将 Key 写入 Skill 目录下的 `.env.local`。这个文件已经被 Git 忽略，只保存在用户本机。
+
+#### 方式 B：手动填写本地配置
+
+在 `xhs-creator-os/.env.local` 新建或编辑本地配置文件：
 
 ```env
 APIFY_API_TOKEN=你的_Apify_API_Key
@@ -64,7 +77,35 @@ python3 scripts/setup_apify_key.py
 python3 scripts/xhs_api.py status
 ```
 
+如果配置正确，状态中会显示：
+
+```json
+{
+  "apify": {
+    "configured": true,
+    "actor": "socialdatax~socialdatax-xhs-data-api"
+  }
+}
+```
+
 `.env.local` 已被 `.gitignore` 忽略，严禁提交到 GitHub。
+
+#### 更换 Actor（高级用法）
+
+默认不需要更换。如果你要测试其他兼容 Actor，可以通过环境变量临时覆盖默认值：
+
+```bash
+APIFY_XHS_ACTOR="其他账号~其他actor名称" \
+python3 scripts/xhs_api.py status
+```
+
+也可以在当前 Terminal 会话中先设置：
+
+```bash
+export APIFY_XHS_ACTOR="其他账号~其他actor名称"
+```
+
+Actor ID 必须使用 `owner~actor-name` 格式。替换后的 Actor 还必须支持本 Skill 使用的 `search_notes` 和 `get_note_detail` 操作，否则搜索或笔记读取会失败。当前 `.env.local` 只读取 `APIFY_API_TOKEN`，不要把 `APIFY_XHS_ACTOR` 写进 `.env.local` 后期待它自动生效。
 
 ### 3. 配置账号定位
 
