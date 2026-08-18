@@ -34,6 +34,11 @@
 或者在当前项目中直接加载本目录的 `SKILL.md`。
 
 ### 2. 配置 Apify API Key
+| 链接：https://console.apify.com/
+⚠️ 首次使用有5次的免费调用额度
+
+<img width="1243" height="750" alt="Screenshot 2026-08-18 at 13 58 34" src="https://github.com/user-attachments/assets/60b034f0-5ff6-4778-8dcc-4782f8b9fa55" />
+配置默认小红书数据API Actor
 
 复制示例文件：
 
