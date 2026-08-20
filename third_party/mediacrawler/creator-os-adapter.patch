@@ -1,0 +1,1266 @@
+diff --git a/.gitignore b/.gitignore
+index 87bf8fc..adc8e8e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -165,6 +165,7 @@ cython_debug/
+ /temp_image/
+ /browser_data/
+ /data/
++/runs/
+
+ */.DS_Store
+ .vscode
+@@ -183,4 +184,4 @@ agent_zone
+ debug_tools
+
+ database/*.db
+-.omx/
+\ No newline at end of file
++.omx/
+diff --git a/cmd_arg/arg.py b/cmd_arg/arg.py
+index 20d1d39..529ff07 100644
+--- a/cmd_arg/arg.py
++++ b/cmd_arg/arg.py
+@@ -65,6 +65,22 @@ class CrawlerTypeEnum(str, Enum):
+     CREATOR = "creator"
+
+
++class XhsSearchNoteTypeEnum(str, Enum):
++    """Content type used only by Xiaohongshu keyword search."""
++
++    ALL = "all"
++    VIDEO = "video"
++    IMAGE = "image"
++
++
++class XhsSearchSortTypeEnum(str, Enum):
++    """Sort option exposed by the Creator OS research contract."""
++
++    GENERAL = "general"
++    POPULARITY = "popularity_descending"
++    LATEST = "time_descending"
++
++
+ class SaveDataOptionEnum(str, Enum):
+     """Data save option enumeration"""
+
+@@ -182,6 +198,30 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+                 rich_help_panel="Basic Configuration",
+             ),
+         ] = _coerce_enum(CrawlerTypeEnum, config.CRAWLER_TYPE, CrawlerTypeEnum.SEARCH),
++        note_type: Annotated[
++            XhsSearchNoteTypeEnum,
++            typer.Option(
++                "--note_type",
++                help="Xiaohongshu search content type (image=图文 | video=视频 | all=全部)",
++                rich_help_panel="Basic Configuration",
++            ),
++        ] = _coerce_enum(
++            XhsSearchNoteTypeEnum,
++            config.XHS_SEARCH_NOTE_TYPE,
++            XhsSearchNoteTypeEnum.IMAGE,
++        ),
++        sort_type: Annotated[
++            XhsSearchSortTypeEnum,
++            typer.Option(
++                "--sort_type",
++                help="Xiaohongshu search sort (general=综合 | popularity_descending=最热 | time_descending=最新)",
++                rich_help_panel="Basic Configuration",
++            ),
++        ] = _coerce_enum(
++            XhsSearchSortTypeEnum,
++            config.SORT_TYPE,
++            XhsSearchSortTypeEnum.GENERAL,
++        ),
+         start: Annotated[
+             int,
+             typer.Option(
+@@ -283,6 +323,48 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+                 rich_help_panel="Basic Configuration",
+             ),
+         ] = config.CRAWLER_MAX_NOTES_COUNT,
++        fetch_details: Annotated[
++            str,
++            typer.Option(
++                "--fetch_details",
++                help="Whether keyword search should fetch each note detail; disabled by default",
++                rich_help_panel="Basic Configuration",
++                show_default=True,
++            ),
++        ] = str(config.XHS_FETCH_NOTE_DETAILS),
++        research_screening: Annotated[
++            str,
++            typer.Option(
++                "--research_screening",
++                help="Collect a wider keyword candidate pool for Creator OS semantic review (no crawler-side relevance rules)",
++                rich_help_panel="Basic Configuration",
++                show_default=True,
++            ),
++        ] = str(config.XHS_RESEARCH_SCREENING),
++        research_candidate_count: Annotated[
++            int,
++            typer.Option(
++                "--research_candidate_count",
++                help="Number of search cards collected for Creator OS semantic review",
++                rich_help_panel="Basic Configuration",
++            ),
++        ] = config.XHS_RESEARCH_CANDIDATE_COUNT,
++        research_detail_limit: Annotated[
++            int,
++            typer.Option(
++                "--research_detail_limit",
++                help="Deprecated: detail selection is now decided by Creator OS after candidate review",
++                rich_help_panel="Basic Configuration",
++            ),
++        ] = config.XHS_RESEARCH_DETAIL_LIMIT,
++        creator_os_output: Annotated[
++            str,
++            typer.Option(
++                "--creator_os_output",
++                help="Write Creator OS-compatible research.json to this path; also writes a sibling raw JSON file",
++                rich_help_panel="Storage Configuration",
++            ),
++        ] = config.XHS_CREATOR_OS_OUTPUT_PATH,
+         max_concurrency_num: Annotated[
+             int,
+             typer.Option(
+@@ -339,6 +421,8 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+         enable_sub_comment = _to_bool(get_sub_comment)
+         enable_headless = _to_bool(headless)
+         enable_ip_proxy_value = _to_bool(enable_ip_proxy)
++        enable_fetch_details = _to_bool(fetch_details)
++        enable_research_screening = _to_bool(research_screening)
+         init_db_value = init_db.value if init_db else None
+
+         # Parse specified_id and creator_id into lists
+@@ -349,6 +433,8 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+         config.PLATFORM = platform.value
+         config.LOGIN_TYPE = lt.value
+         config.CRAWLER_TYPE = crawler_type.value
++        config.XHS_SEARCH_NOTE_TYPE = note_type.value
++        config.SORT_TYPE = sort_type.value
+         config.START_PAGE = start
+         config.KEYWORDS = keywords
+         config.ENABLE_GET_COMMENTS = enable_comment
+@@ -359,6 +445,11 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+         config.COOKIES = cookies
+         config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = max_comments_count_singlenotes
+         config.CRAWLER_MAX_NOTES_COUNT = crawler_max_notes_count
++        config.XHS_FETCH_NOTE_DETAILS = enable_fetch_details
++        config.XHS_RESEARCH_SCREENING = enable_research_screening
++        config.XHS_RESEARCH_CANDIDATE_COUNT = max(1, research_candidate_count)
++        config.XHS_RESEARCH_DETAIL_LIMIT = max(0, research_detail_limit)
++        config.XHS_CREATOR_OS_OUTPUT_PATH = creator_os_output
+         config.MAX_CONCURRENCY_NUM = max_concurrency_num
+         config.SAVE_DATA_PATH = save_data_path
+         config.ENABLE_IP_PROXY = enable_ip_proxy_value
+diff --git a/config/base_config.py b/config/base_config.py
+index 28a852e..46a7d64 100644
+--- a/config/base_config.py
++++ b/config/base_config.py
+@@ -20,8 +20,14 @@
+ # Basic configuration
+ PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
+
+-# 是否使用海外版小红书 (rednote.com)
+-# 开启后 API 走 webapi.rednote.com，cookie 域使用 .rednote.com
++# Creator OS uses automatic site detection. It first checks the dedicated
++# browser profile, then the actual page URL after navigation / QR login, and
++# saves only the resulting site name locally. Users should not need to edit
++# this for domestic Xiaohongshu versus overseas Rednote accounts.
++XHS_SITE_MODE = "auto"  # auto | xiaohongshu | rednote (advanced override)
++
++# Runtime compatibility flag consumed by the upstream API client. It is set
++# from XHS_SITE_MODE / the detected session before any request is made.
+ XHS_INTERNATIONAL = False
+
+ KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
+@@ -60,7 +66,7 @@ ENABLE_CDP_MODE = True
+
+ # CDP 调试端口，用于与浏览器通信
+ # 如果端口被占用，系统会自动尝试下一个可用端口
+-CDP_DEBUG_PORT = 9222
++CDP_DEBUG_PORT = 9223
+
+ # 自定义浏览器路径（可选）
+ # 如果为空，系统会自动检测 Chrome/Edge 的安装路径
+@@ -80,7 +86,7 @@ BROWSER_LAUNCH_TIMEOUT = 60
+ # 用户需要在 Chrome 中开启远程调试：chrome://inspect/#remote-debugging
+ # 或者使用命令行参数启动 Chrome：--remote-debugging-port=9222
+ # 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
+-CDP_CONNECT_EXISTING = True
++CDP_CONNECT_EXISTING = False
+
+ # 程序结束时是否自动关闭浏览器
+ # 设置为 False 可以保持浏览器运行，方便调试
+@@ -98,17 +104,40 @@ USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
+ # The number of pages to start crawling starts from the first page by default
+ START_PAGE = 1
+
+-# Control the number of crawled videos/posts
++# Control the number of search-result cards returned to the caller. The XHS
++# search endpoint may return a fixed page of about 20 cards, but the crawler
++# keeps only this requested number unless a later page is explicitly needed.
+ CRAWLER_MAX_NOTES_COUNT = 15
+
++# Creator OS content-type default. Xiaohongshu calls both image posts and
++# videos "notes", so keep the product-facing choice explicit instead of
++# treating "note" as an unchangeable crawler rule.
++# Supported values: image | video | all
++XHS_SEARCH_NOTE_TYPE = "image"
++
++# Search is deliberately card-first: do not read every note body after a
++# keyword search. Enable only for an explicit detail/rewriting/comparison task.
++XHS_FETCH_NOTE_DETAILS = False
++
++# Creator OS local fallback: collect a wider card pool for the calling agent
++# to evaluate against the user's current request. The crawler must not embed
++# city, category or account-specific relevance rules. Comments remain off.
++XHS_RESEARCH_SCREENING = False
++XHS_RESEARCH_CANDIDATE_COUNT = 30
++XHS_RESEARCH_DETAIL_LIMIT = 12
++
++# Optional Creator OS-compatible JSON array output. When provided, the crawler
++# also writes a sibling `*.raw.json` file containing the untouched search cards.
++XHS_CREATOR_OS_OUTPUT_PATH = ""
++
+ # Controlling the number of concurrent crawlers
+ MAX_CONCURRENCY_NUM = 1
+
+ # Whether to enable crawling media mode (including image or video resources), crawling media is not enabled by default
+ ENABLE_GET_MEIDAS = False
+
+-# Whether to enable comment crawling mode. Comment crawling is enabled by default.
+-ENABLE_GET_COMMENTS = True
++# Comments require note-detail requests and are therefore opt-in.
++ENABLE_GET_COMMENTS = False
+
+ # Control the number of crawled first-level comments (single video/post)
+ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
+diff --git a/config/xhs_config.py b/config/xhs_config.py
+index 02cc966..86c53e1 100644
+--- a/config/xhs_config.py
++++ b/config/xhs_config.py
+@@ -21,7 +21,7 @@
+ # Xiaohongshu platform configuration
+
+ # Sorting method, the specific enumeration value is in media_platform/xhs/field.py
+-SORT_TYPE = "popularity_descending"
++SORT_TYPE = "general"
+
+ # Specify the note URL list, which must carry the xsec_token parameter
+ XHS_SPECIFIED_NOTE_URL_LIST = [
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+index 2dc64e9..60d9fcf 100644
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -21,6 +21,7 @@ import asyncio
+ import os
+ import random
+ from asyncio import Task
++from pathlib import Path
+ from typing import Dict, List, Optional
+
+ from playwright.async_api import (
+@@ -48,9 +49,20 @@ from .exception import (
+     NoteNotFoundError,
+     PlatformAccessError,
+ )
+-from .field import SearchSortType
++from .field import SearchNoteType, SearchSortType
+ from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
++from .creator_os_output import normalize_creator_detail, normalize_note_detail, normalize_search_card, write_creator_os_run
+ from .login import XiaoHongShuLogin
++from .site import (
++    DOMESTIC,
++    INTERNATIONAL,
++    is_international,
++    load_saved_site,
++    save_site,
++    site_from_cookie_domains,
++    site_from_url,
++    site_url,
++)
+
+
+ class XiaoHongShuCrawler(AbstractCrawler):
+@@ -60,8 +72,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
+     cdp_manager: Optional[CDPBrowserManager]
+
+     def __init__(self) -> None:
+-        self.index_url = "https://www.rednote.com" if config.XHS_INTERNATIONAL else "https://www.xiaohongshu.com"
++        self.site = self._preferred_site()
++        self.index_url = site_url(self.site)
+         self.cookie_urls = [self.index_url]
++        config.XHS_INTERNATIONAL = is_international(self.site)
+         # self.user_agent = utils.get_user_agent()
+         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+         self.cdp_manager = None
+@@ -98,7 +112,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 await self.browser_context.add_init_script(path="libs/stealth.min.js")
+
+             self.context_page = await self.browser_context.new_page()
++            await self._detect_site_from_profile()
+             await self.context_page.goto(self.index_url)
++            self._apply_site(site_from_url(self.context_page.url), persist=True)
+
+             # Create a client to interact with the Xiaohongshu website.
+             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+@@ -111,10 +127,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                     cookie_str=config.COOKIES,
+                 )
+                 await login_obj.begin()
+-                await self.xhs_client.update_cookies(
+-                    browser_context=self.browser_context,
+-                    urls=self.cookie_urls,
+-                )
++                # QR login can redirect domestic and overseas accounts to
++                # different domains. Rebuild the client after detecting the
++                # actual destination so host, cookies and output URLs agree.
++                await self._detect_site_from_profile()
++                self._apply_site(site_from_url(self.context_page.url), persist=True)
++                self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+
+             crawler_type_var.set(config.CRAWLER_TYPE)
+             if config.CRAWLER_TYPE == "search":
+@@ -131,19 +149,65 @@ class XiaoHongShuCrawler(AbstractCrawler):
+
+             utils.logger.info("[XiaoHongShuCrawler.start] Xhs Crawler finished ...")
+
++    def _profile_site_path(self) -> Path:
++        profile_name = (
++            f"cdp_{config.USER_DATA_DIR % config.PLATFORM}"
++            if config.ENABLE_CDP_MODE
++            else config.USER_DATA_DIR % config.PLATFORM
++        )
++        return Path(os.getcwd()) / "browser_data" / profile_name / "creator_os_site.json"
++
++    def _preferred_site(self) -> str:
++        mode = str(getattr(config, "XHS_SITE_MODE", "auto")).lower()
++        if mode in (DOMESTIC, INTERNATIONAL):
++            return mode
++        return load_saved_site(self._profile_site_path()) or DOMESTIC
++
++    def _apply_site(self, site: str | None, *, persist: bool = False) -> None:
++        if site not in (DOMESTIC, INTERNATIONAL):
++            return
++        changed = site != self.site
++        self.site = site
++        self.index_url = site_url(site)
++        self.cookie_urls = [self.index_url]
++        config.XHS_INTERNATIONAL = is_international(site)
++        if persist and config.SAVE_LOGIN_STATE:
++            save_site(self._profile_site_path(), site)
++        if changed:
++            utils.logger.info("[XiaoHongShuCrawler] Detected account site: %s", self.index_url)
++
++    async def _detect_site_from_profile(self) -> None:
++        """Use cookie *domains* only; never persist or log cookie values."""
++        cookies = await self.browser_context.cookies()
++        site = site_from_cookie_domains([str(item.get("domain") or "") for item in cookies])
++        self._apply_site(site, persist=True)
++
+     async def search(self) -> None:
+-        """Search for notes and retrieve their comment information."""
++        """Search cards first; fetch note details only when explicitly enabled."""
+         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
+         xhs_limit_count = 20  # Xiaohongshu limit page fixed value
+-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
+-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
++        requested_count = max(1, config.CRAWLER_MAX_NOTES_COUNT)
+         start_page = config.START_PAGE
++        creator_os_records: List[Dict] = []
++        creator_os_raw_cards: List[Dict] = []
++        # This flag widens the card pool only. Relevance must be decided by
++        # Creator OS from the active user request, never by crawler-side rules.
++        candidate_collection_mode = bool(config.XHS_RESEARCH_SCREENING)
++        note_type = {
++            "all": SearchNoteType.ALL,
++            "video": SearchNoteType.VIDEO,
++            "image": SearchNoteType.IMAGE,
++        }.get(str(config.XHS_SEARCH_NOTE_TYPE).lower(), SearchNoteType.IMAGE)
+         for keyword in config.KEYWORDS.split(","):
+             source_keyword_var.set(keyword)
+             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
+             page = 1
+             search_id = get_search_id()
+-            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
++            collected_count = 0
++            seen_note_ids = set()
++            selected_search_cards: List[Dict] = []
++            target_count = max(requested_count, config.XHS_RESEARCH_CANDIDATE_COUNT) if candidate_collection_mode else requested_count
++            while collected_count < target_count:
+                 if page < start_page:
+                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
+                     page += 1
+@@ -158,19 +222,54 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                         search_id=search_id,
+                         page=page,
+                         sort=(SearchSortType(config.SORT_TYPE) if config.SORT_TYPE != "" else SearchSortType.GENERAL),
++                        note_type=note_type,
+                     )
+-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Search notes response: {notes_res}")
+-                    if not notes_res or not notes_res.get("has_more", False):
+-                        utils.logger.info("[XiaoHongShuCrawler.search] No more content!")
++                    if not notes_res:
++                        utils.logger.info("[XiaoHongShuCrawler.search] No search response!")
+                         break
++
++                    candidates = [
++                        item for item in notes_res.get("items", [])
++                        if item.get("model_type") == "note" and item.get("id") and item.get("id") not in seen_note_ids
++                    ]
++                    remaining = target_count - collected_count
++                    selected_cards = candidates[:remaining]
++                    for card in selected_cards:
++                        seen_note_ids.add(card["id"])
++                        selected_search_cards.append(card)
++                        creator_os_records.append(normalize_search_card(card, keyword))
++                    collected_count += len(selected_cards)
++                    utils.logger.info(
++                        "[XiaoHongShuCrawler.search] Search cards: "
++                        f"received={len(candidates)}, selected={len(selected_cards)}, "
++                        f"collected={collected_count}/{target_count}, has_more={notes_res.get('has_more', False)}"
++                    )
++
++                    if candidate_collection_mode:
++                        if collected_count >= target_count or not notes_res.get("has_more", False):
++                            break
++                        page += 1
++                        continue
++
++                    if not config.XHS_FETCH_NOTE_DETAILS:
++                        if config.ENABLE_GET_COMMENTS:
++                            utils.logger.warning(
++                                "[XiaoHongShuCrawler.search] Card-only mode skips comments; "
++                                "run with --fetch_details yes to collect comments."
++                            )
++                        if collected_count >= requested_count or not notes_res.get("has_more", False):
++                            break
++                        page += 1
++                        continue
++
+                     semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+                     task_list = [
+                         self.get_note_detail_async_task(
+                             note_id=post_item.get("id"),
+-                            xsec_source=post_item.get("xsec_source"),
++                            xsec_source=post_item.get("xsec_source") or "pc_search",
+                             xsec_token=post_item.get("xsec_token"),
+                             semaphore=semaphore,
+-                        ) for post_item in notes_res.get("items", {}) if post_item.get("model_type") not in ("rec_query", "hot_query")
++                        ) for post_item in selected_cards
+                     ]
+                     note_details = await asyncio.gather(*task_list)
+                     for note_detail in note_details:
+@@ -180,19 +279,48 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                             note_ids.append(note_detail.get("note_id"))
+                             xsec_tokens.append(note_detail.get("xsec_token"))
+                     page += 1
+-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Note details: {note_details}")
++                    utils.logger.info(f"[XiaoHongShuCrawler.search] Retrieved {len(note_details)} requested note details")
+                     await self.batch_get_note_comments(note_ids, xsec_tokens)
+
+                     # Sleep after each page navigation
+                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                     utils.logger.info(f"[XiaoHongShuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
++                    if collected_count >= requested_count or not notes_res.get("has_more", False):
++                        break
+                 except DataFetchError:
+                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
+                     break
+
++            if candidate_collection_mode:
++                creator_os_raw_cards.extend(selected_search_cards)
++                utils.logger.info(
++                    "[XiaoHongShuCrawler.search] Creator OS candidate collection: "
++                    f"candidates={len(selected_search_cards)}, requested_final={requested_count}"
++                )
++
++        if config.XHS_CREATOR_OS_OUTPUT_PATH:
++            write_creator_os_run(
++                creator_os_records,
++                config.XHS_CREATOR_OS_OUTPUT_PATH,
++                raw_cards=creator_os_raw_cards if candidate_collection_mode else None,
++                metadata={
++                    "operation": "research_candidates" if candidate_collection_mode else "research",
++                    "query": config.KEYWORDS,
++                    "sort_type": config.SORT_TYPE,
++                    "note_type": config.XHS_SEARCH_NOTE_TYPE,
++                    "requested_limit": requested_count,
++                    "candidate_count": len(creator_os_records),
++                },
++            )
++            utils.logger.info(
++                "[XiaoHongShuCrawler.search] Wrote Creator OS research output: "
++                f"records={len(creator_os_records)}, path={config.XHS_CREATOR_OS_OUTPUT_PATH}"
++            )
++
+     async def get_creators_and_notes(self) -> None:
+         """Get creator's notes and retrieve their comment information."""
+         utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes] Begin get Xiaohongshu creators")
++        creator_os_records: List[Dict] = []
+         for creator_url in config.XHS_CREATOR_ID_LIST:
+             try:
+                 # Parse creator URL to get user_id and security tokens
+@@ -225,19 +353,39 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             all_notes_list = await self.xhs_client.get_all_notes_by_creator(
+                 user_id=user_id,
+                 crawl_interval=crawl_interval,
+-                callback=self.fetch_creator_notes_detail,
+                 xsec_token=creator_info.xsec_token,
+                 xsec_source=creator_info.xsec_source,
+             )
+
++            note_details = await self.fetch_creator_notes_detail(all_notes_list)
++            creator_os_records.extend(
++                normalize_creator_detail(
++                    note_detail,
++                    creator_profile_url=creator_url,
++                )
++                for note_detail in note_details
++            )
++
+             note_ids = []
+             xsec_tokens = []
+             for note_item in all_notes_list:
+                 note_ids.append(note_item.get("note_id"))
+                 xsec_tokens.append(note_item.get("xsec_token"))
+-            await self.batch_get_note_comments(note_ids, xsec_tokens)
++            if config.ENABLE_GET_COMMENTS:
++                await self.batch_get_note_comments(note_ids, xsec_tokens)
++
++        if config.XHS_CREATOR_OS_OUTPUT_PATH:
++            write_creator_os_run(
++                creator_os_records,
++                config.XHS_CREATOR_OS_OUTPUT_PATH,
++                metadata={"operation": "creator", "requested_limit": config.CRAWLER_MAX_NOTES_COUNT},
++            )
++            utils.logger.info(
++                "[XiaoHongShuCrawler.get_creators_and_notes] Wrote Creator OS creator output: "
++                f"records={len(creator_os_records)}, path={config.XHS_CREATOR_OS_OUTPUT_PATH}"
++            )
+
+-    async def fetch_creator_notes_detail(self, note_list: List[Dict]):
++    async def fetch_creator_notes_detail(self, note_list: List[Dict]) -> List[Dict]:
+         """Concurrently obtain the specified post list and save the data"""
+         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+         task_list = [
+@@ -254,6 +402,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             if note_detail:
+                 await xhs_store.update_xhs_note(note_detail)
+                 await self.get_notice_media(note_detail)
++        return [note_detail for note_detail in note_details if note_detail]
+
+     async def get_specified_notes(self):
+         """Get the information and comments of the specified post
+@@ -263,7 +412,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
+         get_note_detail_task_list = []
+         for full_note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
+             note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
+-            utils.logger.info(f"[XiaoHongShuCrawler.get_specified_notes] Parse note url info: {note_url_info}")
++            # URLs can carry temporary access parameters. Keep logs useful
++            # without writing those parameters to terminal output.
++            utils.logger.info(
++                "[XiaoHongShuCrawler.get_specified_notes] Parsed note URL: "
++                f"note_id={note_url_info.note_id}, source={note_url_info.xsec_source}"
++            )
+             crawler_task = self.get_note_detail_async_task(
+                 note_id=note_url_info.note_id,
+                 xsec_source=note_url_info.xsec_source,
+@@ -274,6 +428,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
+
+         need_get_comment_note_ids = []
+         xsec_tokens = []
++        creator_os_records: List[Dict] = []
+         note_details = await asyncio.gather(*get_note_detail_task_list)
+         for note_detail in note_details:
+             if note_detail:
+@@ -281,7 +436,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 xsec_tokens.append(note_detail.get("xsec_token", ""))
+                 await xhs_store.update_xhs_note(note_detail)
+                 await self.get_notice_media(note_detail)
++                creator_os_records.append(normalize_note_detail(note_detail, query=config.KEYWORDS))
+         await self.batch_get_note_comments(need_get_comment_note_ids, xsec_tokens)
++        if config.XHS_CREATOR_OS_OUTPUT_PATH:
++            write_creator_os_run(
++                creator_os_records,
++                config.XHS_CREATOR_OS_OUTPUT_PATH,
++                metadata={"operation": "detail", "requested_limit": len(config.XHS_SPECIFIED_NOTE_URL_LIST)},
++            )
++            utils.logger.info(
++                "[XiaoHongShuCrawler.get_specified_notes] Wrote Creator OS detail output: "
++                f"records={len(creator_os_records)}, path={config.XHS_CREATOR_OS_OUTPUT_PATH}"
++            )
+
+     async def get_note_detail_async_task(
+         self,
+diff --git a/media_platform/xhs/creator_os_output.py b/media_platform/xhs/creator_os_output.py
+new file mode 100644
+index 0000000..43a7cfe
+--- /dev/null
++++ b/media_platform/xhs/creator_os_output.py
+@@ -0,0 +1,196 @@
++"""Creator OS search-card output adapter for the local MediaCrawler fork.
++
++This adapter intentionally records public search-card fields before any note
++detail request. It keeps the provider payload locally for traceability while
++emitting the stable schema consumed by xhs-creator-os research runs.
++"""
++
++from __future__ import annotations
++
++import json
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any, Iterable
++from urllib.parse import urlencode
++
++import config
++
++
++def _note_type(value: Any) -> str:
++    normalized = str(value or "").lower()
++    if normalized in {"video", "1"}:
++        return "video"
++    if normalized in {"normal", "image", "images", "2"}:
++        return "image"
++    return "unknown"
++
++
++def _first_publish_text(note_card: dict[str, Any]) -> str:
++    for tag in note_card.get("corner_tag_info") or []:
++        if tag.get("type") == "publish_time" and tag.get("text"):
++            return str(tag["text"])
++    return ""
++
++
++def _url(path: str, token: str, source: str) -> str:
++    domain = "https://www.rednote.com" if config.XHS_INTERNATIONAL else "https://www.xiaohongshu.com"
++    query = {"xsec_token": token, "xsec_source": source}
++    query = {key: value for key, value in query.items() if value}
++    suffix = f"?{urlencode(query)}" if query else ""
++    return f"{domain}{path}{suffix}"
++
++
++def normalize_search_card(card: dict[str, Any], query: str) -> dict[str, Any]:
++    """Map one untouched XHS/Rednote search card to Creator OS fields."""
++    note_card = card.get("note_card") or {}
++    user = note_card.get("user") or {}
++    note_id = str(card.get("id") or "")
++    note_token = str(card.get("xsec_token") or "")
++    source = str(card.get("xsec_source") or "pc_search")
++    user_id = str(user.get("user_id") or "")
++    user_token = str(user.get("xsec_token") or "")
++    interact = note_card.get("interact_info") or {}
++
++    return {
++        "note_id": note_id,
++        "url": _url(f"/explore/{note_id}", note_token, source) if note_id else "",
++        "title": note_card.get("display_title") or "",
++        "body": "",
++        "author_id": user_id,
++        "author_name": user.get("nickname") or user.get("nick_name") or "",
++        "author_url": _url(f"/user/profile/{user_id}", user_token, source) if user_id else "",
++        "published_at": _first_publish_text(note_card),
++        "note_type": _note_type(note_card.get("type")),
++        "content_level": "card",
++        "detail_status": "not_requested",
++        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "query": query,
++        "source": "mediacrawler-rednote" if config.XHS_INTERNATIONAL else "mediacrawler-xiaohongshu",
++        "likes": interact.get("liked_count"),
++        "saves": interact.get("collected_count"),
++        "comments": interact.get("comment_count"),
++        "shares": interact.get("shared_count"),
++        "raw": card,
++    }
++
++
++def normalize_creator_detail(
++    detail: dict[str, Any],
++    *,
++    creator_profile_url: str,
++) -> dict[str, Any]:
++    """Map an author-feed detail response to the Creator OS research schema."""
++    user = detail.get("user") or {}
++    interact = detail.get("interact_info") or {}
++    note_id = str(detail.get("note_id") or "")
++    token = str(detail.get("xsec_token") or "")
++    source = str(detail.get("xsec_source") or "pc_user")
++    timestamp = detail.get("time")
++    published_at = ""
++    if isinstance(timestamp, (int, float)):
++        # XHS uses milliseconds in the creator-feed response.
++        try:
++            published_at = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).date().isoformat()
++        except (OverflowError, OSError, ValueError):
++            pass
++
++    return {
++        "note_id": note_id,
++        "url": _url(f"/explore/{note_id}", token, source) if note_id else "",
++        "title": detail.get("title") or detail.get("desc", "")[:80],
++        "body": detail.get("desc") or "",
++        "author_id": str(user.get("user_id") or ""),
++        "author_name": user.get("nickname") or user.get("nick_name") or "",
++        "author_url": creator_profile_url,
++        "published_at": published_at,
++        "note_type": _note_type(detail.get("type")),
++        "content_level": "detail",
++        "detail_status": "success",
++        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "query": "",
++        "source": "mediacrawler-creator-rednote" if config.XHS_INTERNATIONAL else "mediacrawler-creator-xiaohongshu",
++        "likes": interact.get("liked_count"),
++        "saves": interact.get("collected_count"),
++        "comments": interact.get("comment_count"),
++        "shares": interact.get("share_count"),
++        "raw": detail,
++    }
++
++
++def normalize_note_detail(detail: dict[str, Any], *, query: str = "") -> dict[str, Any]:
++    """Map a specified-note detail response to the shared Creator OS schema."""
++    user = detail.get("user") or {}
++    interact = detail.get("interact_info") or {}
++    note_id = str(detail.get("note_id") or "")
++    note_token = str(detail.get("xsec_token") or "")
++    source = str(detail.get("xsec_source") or "pc_search")
++    user_id = str(user.get("user_id") or "")
++    user_token = str(user.get("xsec_token") or "")
++    published_at = ""
++    timestamp = detail.get("time")
++    if isinstance(timestamp, (int, float)):
++        try:
++            published_at = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).date().isoformat()
++        except (OverflowError, OSError, ValueError):
++            pass
++
++    return {
++        "note_id": note_id,
++        "url": _url(f"/explore/{note_id}", note_token, source) if note_id else "",
++        "title": detail.get("title") or detail.get("desc", "")[:80],
++        "body": detail.get("desc") or "",
++        "author_id": user_id,
++        "author_name": user.get("nickname") or user.get("nick_name") or "",
++        "author_url": _url(f"/user/profile/{user_id}", user_token, source) if user_id else "",
++        "published_at": published_at,
++        "note_type": _note_type(detail.get("type")),
++        "content_level": "detail",
++        "detail_status": "success",
++        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "query": query,
++        "source": "mediacrawler-rednote" if config.XHS_INTERNATIONAL else "mediacrawler-xiaohongshu",
++        "likes": interact.get("liked_count"),
++        "saves": interact.get("collected_count"),
++        "comments": interact.get("comment_count"),
++        "shares": interact.get("shared_count") or interact.get("share_count"),
++        "raw": detail,
++    }
++
++
++def write_creator_os_run(
++    records: Iterable[dict[str, Any]],
++    output_path: str,
++    *,
++    raw_cards: Iterable[dict[str, Any]] | None = None,
++    screening: Any | None = None,
++    metadata: dict[str, Any] | None = None,
++) -> None:
++    """Write final results, untouched candidates, and optional screening decisions atomically."""
++    if not output_path:
++        return
++
++    normalized = list(records)
++    target = Path(output_path).expanduser()
++    target.parent.mkdir(parents=True, exist_ok=True)
++    raw_target = target.with_name(f"{target.stem}.raw{target.suffix or '.json'}")
++    raw_records = list(raw_cards) if raw_cards is not None else [record.get("raw", {}) for record in normalized]
++
++    for path, payload in ((target, normalized), (raw_target, raw_records)):
++        temp = path.with_name(f".{path.name}.tmp")
++        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
++        temp.replace(path)
++    if screening is not None:
++        screening_target = target.with_name(f"{target.stem}.screening{target.suffix or '.json'}")
++        temp = screening_target.with_name(f".{screening_target.name}.tmp")
++        temp.write_text(json.dumps(screening, ensure_ascii=False, indent=2), encoding="utf-8")
++        temp.replace(screening_target)
++    manifest_target = target.with_name(f"{target.stem}.manifest{target.suffix or '.json'}")
++    manifest = {
++        "provider": "media",
++        "site": "rednote" if config.XHS_INTERNATIONAL else "xiaohongshu",
++        "returned_count": len(normalized),
++        **(metadata or {}),
++    }
++    temp = manifest_target.with_name(f".{manifest_target.name}.tmp")
++    temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
++    temp.replace(manifest_target)
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+index e382954..51fb66d 100644
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -19,8 +19,11 @@
+
+
+ import asyncio
++import base64
+ import functools
++import os
+ import sys
++from pathlib import Path
+ from typing import Optional
+
+ from playwright.async_api import BrowserContext, Page
+@@ -193,6 +196,7 @@ class XiaoHongShuLogin(AbstractLogin):
+         no_logged_in_session = cookie_dict.get("web_session")
+
+         # show login qrcode
++        self._write_creator_os_qrcode(base64_qrcode_img)
+         # fix issue #12
+         # we need to use partial function to call show_qrcode function and run in executor
+         # then current asyncio event loop will not be blocked
+@@ -210,6 +214,34 @@ class XiaoHongShuLogin(AbstractLogin):
+         utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] Login successful then wait for {wait_redirect_seconds} seconds redirect ...")
+         await asyncio.sleep(wait_redirect_seconds)
+
++    @staticmethod
++    def _write_creator_os_qrcode(base64_qrcode_img: str) -> None:
++        """Write a short-lived QR image only when Creator OS requests it.
++
++        The caller supplies a per-run path through the environment.  This keeps
++        the upstream interactive behavior unchanged while allowing Codex to
++        display the QR code during an interrupted local run.  No cookie or
++        session value is written alongside the image.
++        """
++        output_path = os.environ.get("CREATOR_OS_QR_OUTPUT_PATH", "").strip()
++        if not output_path:
++            return
++
++        try:
++            payload = base64_qrcode_img.split(",", 1)[-1]
++            target = Path(output_path).expanduser()
++            target.parent.mkdir(parents=True, exist_ok=True)
++            target.write_bytes(base64.b64decode(payload))
++            utils.logger.info(
++                "[XiaoHongShuLogin.login_by_qrcode] Wrote temporary Creator OS QR image: %s",
++                target,
++            )
++        except Exception as exc:
++            utils.logger.warning(
++                "[XiaoHongShuLogin.login_by_qrcode] Could not write Creator OS QR image: %s",
++                exc,
++            )
++
+     async def login_by_cookies(self):
+         """login xiaohongshu website by cookies"""
+         utils.logger.info("[XiaoHongShuLogin.login_by_cookies] Begin login xiaohongshu by cookie ...")
+diff --git a/media_platform/xhs/site.py b/media_platform/xhs/site.py
+new file mode 100644
+index 0000000..1ae11f0
+--- /dev/null
++++ b/media_platform/xhs/site.py
+@@ -0,0 +1,57 @@
++"""Site selection for domestic Xiaohongshu and overseas Rednote sessions.
++
++The crawler stores only the resolved site name beside its dedicated browser
++profile. Cookie values are never read into this metadata file.
++"""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++from urllib.parse import urlparse
++
++
++DOMESTIC = "xiaohongshu"
++INTERNATIONAL = "rednote"
++_VALID_SITES = {DOMESTIC, INTERNATIONAL}
++
++
++def site_from_url(url: str) -> str | None:
++    host = (urlparse(url).hostname or "").lower()
++    if host == "rednote.com" or host.endswith(".rednote.com"):
++        return INTERNATIONAL
++    if host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com"):
++        return DOMESTIC
++    return None
++
++
++def site_from_cookie_domains(domains: list[str]) -> str | None:
++    """Infer a site only when its cookie domain is unambiguous."""
++    sites = {site_from_url(f"https://{domain.lstrip('.')}") for domain in domains}
++    sites.discard(None)
++    return next(iter(sites)) if len(sites) == 1 else None
++
++
++def site_url(site: str) -> str:
++    if site == INTERNATIONAL:
++        return "https://www.rednote.com"
++    return "https://www.xiaohongshu.com"
++
++
++def is_international(site: str) -> bool:
++    return site == INTERNATIONAL
++
++
++def load_saved_site(path: Path) -> str | None:
++    try:
++        value = json.loads(path.read_text(encoding="utf-8")).get("site")
++    except (OSError, ValueError, AttributeError):
++        return None
++    return value if value in _VALID_SITES else None
++
++
++def save_site(path: Path, site: str) -> None:
++    if site not in _VALID_SITES:
++        return
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps({"site": site}, ensure_ascii=False), encoding="utf-8")
+diff --git a/store/xhs/__init__.py b/store/xhs/__init__.py
+index 5ef8e3c..9c10b44 100644
+--- a/store/xhs/__init__.py
++++ b/store/xhs/__init__.py
+@@ -127,7 +127,13 @@ async def update_xhs_note(note_item: Dict):
+         "source_keyword": source_keyword_var.get(),  # Search keyword
+         "xsec_token": note_item.get("xsec_token"),  # xsec_token
+     }
+-    utils.logger.info(f"[store.xhs.update_xhs_note] xhs note: {local_db_item}")
++    # Do not log the complete record: it contains temporary URL parameters and
++    # media URLs. Keep enough context for operational troubleshooting only.
++    utils.logger.info(
++        "[store.xhs.update_xhs_note] Prepared note "
++        f"id={local_db_item['note_id']}, title={local_db_item['title'][:48]!r}, "
++        f"has_body={bool(local_db_item['desc'])}"
++    )
+     await XhsStoreFactory.create_store().store_content(local_db_item)
+
+
+diff --git a/tests/test_xhs_creator_os_output.py b/tests/test_xhs_creator_os_output.py
+new file mode 100644
+index 0000000..bfedf71
+--- /dev/null
++++ b/tests/test_xhs_creator_os_output.py
+@@ -0,0 +1,26 @@
++from __future__ import annotations
++
++from media_platform.xhs.creator_os_output import normalize_note_detail, normalize_search_card
++
++
++def test_search_card_is_marked_as_card_and_image() -> None:
++    record = normalize_search_card(
++        {
++            "id": "note-1",
++            "note_card": {"display_title": "图文", "type": "normal", "user": {}, "interact_info": {}},
++        },
++        "关键词",
++    )
++    assert record["note_type"] == "image"
++    assert record["content_level"] == "card"
++    assert record["detail_status"] == "not_requested"
++
++
++def test_note_detail_is_marked_as_detail_and_video() -> None:
++    record = normalize_note_detail(
++        {"note_id": "note-2", "title": "视频", "desc": "正文", "type": "video", "user": {}, "interact_info": {}},
++        query="关键词",
++    )
++    assert record["note_type"] == "video"
++    assert record["content_level"] == "detail"
++    assert record["detail_status"] == "success"
+diff --git a/tests/test_xhs_site_detection.py b/tests/test_xhs_site_detection.py
+new file mode 100644
+index 0000000..05b39a5
+--- /dev/null
++++ b/tests/test_xhs_site_detection.py
+@@ -0,0 +1,36 @@
++import json
++import tempfile
++import unittest
++from pathlib import Path
++
++from media_platform.xhs.site import (
++    DOMESTIC,
++    INTERNATIONAL,
++    load_saved_site,
++    save_site,
++    site_from_cookie_domains,
++    site_from_url,
++)
++
++
++class SiteDetectionTests(unittest.TestCase):
++    def test_detects_supported_urls(self):
++        self.assertEqual(site_from_url("https://www.rednote.com/explore/a"), INTERNATIONAL)
++        self.assertEqual(site_from_url("https://www.xiaohongshu.com/explore/a"), DOMESTIC)
++        self.assertIsNone(site_from_url("https://example.com"))
++
++    def test_requires_unambiguous_cookie_domains(self):
++        self.assertEqual(site_from_cookie_domains([".rednote.com"]), INTERNATIONAL)
++        self.assertEqual(site_from_cookie_domains([".xiaohongshu.com"]), DOMESTIC)
++        self.assertIsNone(site_from_cookie_domains([".rednote.com", ".xiaohongshu.com"]))
++
++    def test_persists_only_site_name(self):
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "creator_os_site.json"
++            save_site(path, INTERNATIONAL)
++            self.assertEqual(load_saved_site(path), INTERNATIONAL)
++            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"site": INTERNATIONAL})
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/cmd_arg/arg.py b/cmd_arg/arg.py
+index 529ff07..deeb96b 100644
+--- a/cmd_arg/arg.py
++++ b/cmd_arg/arg.py
+@@ -63,6 +63,8 @@ class CrawlerTypeEnum(str, Enum):
+     SEARCH = "search"
+     DETAIL = "detail"
+     CREATOR = "creator"
++    CREATOR_TOP = "creator_top"
++    SESSION = "session"
+
+
+ class XhsSearchNoteTypeEnum(str, Enum):
+@@ -194,7 +196,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+             CrawlerTypeEnum,
+             typer.Option(
+                 "--type",
+-                help="Crawler type (search=Search | detail=Detail | creator=Creator)",
++                help="Crawler type (search=Search | detail=Detail | creator=Creator | creator_top=Creator Top-N | session=Login check)",
+                 rich_help_panel="Basic Configuration",
+             ),
+         ] = _coerce_enum(CrawlerTypeEnum, config.CRAWLER_TYPE, CrawlerTypeEnum.SEARCH),
+@@ -323,6 +325,14 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+                 rich_help_panel="Basic Configuration",
+             ),
+         ] = config.CRAWLER_MAX_NOTES_COUNT,
++        creator_top_limit: Annotated[
++            int,
++            typer.Option(
++                "--creator_top_limit",
++                help="In creator_top mode, retrieve note details only for this many highest-saved cards",
++                rich_help_panel="Basic Configuration",
++            ),
++        ] = config.XHS_CREATOR_TOP_LIMIT,
+         fetch_details: Annotated[
+             str,
+             typer.Option(
+@@ -445,6 +455,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
+         config.COOKIES = cookies
+         config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = max_comments_count_singlenotes
+         config.CRAWLER_MAX_NOTES_COUNT = crawler_max_notes_count
++        config.XHS_CREATOR_TOP_LIMIT = max(1, creator_top_limit)
+         config.XHS_FETCH_NOTE_DETAILS = enable_fetch_details
+         config.XHS_RESEARCH_SCREENING = enable_research_screening
+         config.XHS_RESEARCH_CANDIDATE_COUNT = max(1, research_candidate_count)
+diff --git a/config/base_config.py b/config/base_config.py
+index 46a7d64..701913c 100644
+--- a/config/base_config.py
++++ b/config/base_config.py
+@@ -126,6 +126,11 @@ XHS_RESEARCH_SCREENING = False
+ XHS_RESEARCH_CANDIDATE_COUNT = 30
+ XHS_RESEARCH_DETAIL_LIMIT = 12
+
++# Creator Top-N is deliberately card-first: collect the requested author-feed
++# window, rank by the public engagement snapshot, then retrieve details only
++# for the selected notes.
++XHS_CREATOR_TOP_LIMIT = 5
++
+ # Optional Creator OS-compatible JSON array output. When provided, the crawler
+ # also writes a sibling `*.raw.json` file containing the untouched search cards.
+ XHS_CREATOR_OS_OUTPUT_PATH = ""
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+index 60d9fcf..2b2aaab 100644
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -51,7 +51,7 @@ from .exception import (
+ )
+ from .field import SearchNoteType, SearchSortType
+ from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
+-from .creator_os_output import normalize_creator_detail, normalize_note_detail, normalize_search_card, write_creator_os_run
++from .creator_os_output import normalize_creator_card, normalize_creator_detail, normalize_note_detail, normalize_search_card, write_creator_os_run
+ from .login import XiaoHongShuLogin
+ from .site import (
+     DOMESTIC,
+@@ -144,6 +144,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             elif config.CRAWLER_TYPE == "creator":
+                 # Get creator's information and their notes and comments
+                 await self.get_creators_and_notes()
++            elif config.CRAWLER_TYPE == "creator_top":
++                await self.get_creator_top_notes()
++            elif config.CRAWLER_TYPE == "session":
++                utils.logger.info("[XiaoHongShuCrawler.start] Login session verified")
+             else:
+                 pass
+
+@@ -385,6 +389,91 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 f"records={len(creator_os_records)}, path={config.XHS_CREATOR_OS_OUTPUT_PATH}"
+             )
+
++    @staticmethod
++    def _engagement_score(value: object) -> float:
++        """Sort human-readable engagement snapshots without treating unknown as zero."""
++        if value is None:
++            return -1.0
++        if isinstance(value, (int, float)):
++            return float(value)
++        text = str(value).strip().lower().replace(",", "")
++        if not text:
++            return -1.0
++        multiplier = 1.0
++        if text.endswith("万"):
++            multiplier, text = 10000.0, text[:-1]
++        elif text.endswith("w"):
++            multiplier, text = 10000.0, text[:-1]
++        elif text.endswith("k"):
++            multiplier, text = 1000.0, text[:-1]
++        try:
++            return float(text) * multiplier
++        except ValueError:
++            return -1.0
++
++    async def get_creator_top_notes(self) -> None:
++        """Rank creator-feed cards by saves, then request details only for Top-N."""
++        utils.logger.info("[XiaoHongShuCrawler.get_creator_top_notes] Begin Creator Top-N collection")
++        output_records: List[Dict] = []
++        raw_cards: List[Dict] = []
++        scanned_count = 0
++        detail_requested = 0
++        detail_returned = 0
++
++        for creator_url in config.XHS_CREATOR_ID_LIST:
++            try:
++                creator_info: CreatorUrlInfo = parse_creator_info_from_url(creator_url)
++                cards = await self.xhs_client.get_all_notes_by_creator(
++                    user_id=creator_info.user_id,
++                    crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
++                    xsec_token=creator_info.xsec_token,
++                    xsec_source=creator_info.xsec_source,
++                )
++            except ValueError as exc:
++                utils.logger.error("[XiaoHongShuCrawler.get_creator_top_notes] Invalid creator URL: %s", exc)
++                continue
++            except (IPBlockError, PlatformAccessError) as exc:
++                utils.logger.error("[XiaoHongShuCrawler.get_creator_top_notes] Creator access restricted: %s", exc)
++                continue
++
++            raw_cards.extend(cards)
++            scanned_count += len(cards)
++            normalized_cards = [normalize_creator_card(card, creator_profile_url=creator_url) for card in cards]
++            ranked_cards = sorted(
++                normalized_cards,
++                key=lambda record: self._engagement_score(record.get("saves")),
++                reverse=True,
++            )
++            selected_cards = ranked_cards[: config.XHS_CREATOR_TOP_LIMIT]
++            raw_by_id = {str(card.get("note_id") or card.get("id") or ""): card for card in cards}
++            selected_raw_cards = [raw_by_id[record["note_id"]] for record in selected_cards if record.get("note_id") in raw_by_id]
++            detail_requested += len(selected_raw_cards)
++            details = await self.fetch_creator_notes_detail(selected_raw_cards)
++            detail_by_id = {str(detail.get("note_id") or ""): detail for detail in details}
++            detail_returned += len(details)
++
++            for card in selected_cards:
++                detail = detail_by_id.get(str(card.get("note_id") or ""))
++                if detail:
++                    output_records.append(normalize_creator_detail(detail, creator_profile_url=creator_url))
++                else:
++                    card["detail_status"] = "unavailable"
++                    output_records.append(card)
++
++        if config.XHS_CREATOR_OS_OUTPUT_PATH:
++            write_creator_os_run(
++                output_records,
++                config.XHS_CREATOR_OS_OUTPUT_PATH,
++                raw_cards=raw_cards,
++                metadata={
++                    "operation": "creator_top",
++                    "scanned_cards": scanned_count,
++                    "top_limit": config.XHS_CREATOR_TOP_LIMIT,
++                    "detail_requested": detail_requested,
++                    "detail_returned": detail_returned,
++                },
++            )
++
+     async def fetch_creator_notes_detail(self, note_list: List[Dict]) -> List[Dict]:
+         """Concurrently obtain the specified post list and save the data"""
+         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+diff --git a/media_platform/xhs/creator_os_output.py b/media_platform/xhs/creator_os_output.py
+index 43a7cfe..d4b345d 100644
+--- a/media_platform/xhs/creator_os_output.py
++++ b/media_platform/xhs/creator_os_output.py
+@@ -117,6 +117,42 @@ def normalize_creator_detail(
+     }
+
+
++def normalize_creator_card(
++    card: dict[str, Any],
++    *,
++    creator_profile_url: str,
++) -> dict[str, Any]:
++    """Map an author-feed card without reading its full note detail."""
++    note = card.get("note_card") or card
++    user = note.get("user") or card.get("user") or {}
++    interact = note.get("interact_info") or card.get("interact_info") or {}
++    note_id = str(note.get("note_id") or card.get("note_id") or card.get("id") or "")
++    token = str(note.get("xsec_token") or card.get("xsec_token") or "")
++    source = str(note.get("xsec_source") or card.get("xsec_source") or "pc_user")
++
++    return {
++        "note_id": note_id,
++        "url": _url(f"/explore/{note_id}", token, source) if note_id else "",
++        "title": note.get("title") or note.get("display_title") or note.get("desc", "")[:80],
++        "body": "",
++        "author_id": str(user.get("user_id") or ""),
++        "author_name": user.get("nickname") or user.get("nick_name") or "",
++        "author_url": creator_profile_url,
++        "published_at": _first_publish_text(note),
++        "note_type": _note_type(note.get("type")),
++        "content_level": "card",
++        "detail_status": "not_requested",
++        "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
++        "query": "",
++        "source": "mediacrawler-creator-rednote" if config.XHS_INTERNATIONAL else "mediacrawler-creator-xiaohongshu",
++        "likes": interact.get("liked_count"),
++        "saves": interact.get("collected_count"),
++        "comments": interact.get("comment_count"),
++        "shares": interact.get("shared_count") or interact.get("share_count"),
++        "raw": card,
++    }
++
++
+ def normalize_note_detail(detail: dict[str, Any], *, query: str = "") -> dict[str, Any]:
+     """Map a specified-note detail response to the shared Creator OS schema."""
+     user = detail.get("user") or {}
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+index 51fb66d..690580d 100644
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -195,13 +195,17 @@ class XiaoHongShuLogin(AbstractLogin):
+         _, cookie_dict = utils.convert_cookies(current_cookie)
+         no_logged_in_session = cookie_dict.get("web_session")
+
+-        # show login qrcode
++        # Creator OS supplies a temporary file path when it wants to render the
++        # QR inside Codex. In that case do not also open an OS image viewer.
++        # The normal upstream interactive behavior remains unchanged otherwise.
++        creator_os_qr_path = os.environ.get("CREATOR_OS_QR_OUTPUT_PATH", "").strip()
+         self._write_creator_os_qrcode(base64_qrcode_img)
+-        # fix issue #12
+-        # we need to use partial function to call show_qrcode function and run in executor
+-        # then current asyncio event loop will not be blocked
+-        partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
+-        asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
++        if not creator_os_qr_path:
++            # fix issue #12
++            # we need to use partial function to call show_qrcode function and run in executor
++            # then current asyncio event loop will not be blocked
++            partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
++            asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
+
+         utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] waiting for scan code login, remaining time is 120s")
+         try:

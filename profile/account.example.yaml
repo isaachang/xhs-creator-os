@@ -5,27 +5,27 @@ account:
   handle: ""
 
 positioning:
-  identity: "你的账号身份和内容定位"
+  identity: "一句话说明你是谁，以及你帮助谁解决什么问题"
   audience:
-    - "你的核心受众"
-  audience_situation: "受众当前遇到的问题"
-  promise: "你为受众提供的具体价值"
-  differentiation: "你与同类账号的差异"
+    - "目标读者 1"
+    - "目标读者 2"
+  audience_situation: "读者当前最常遇到的具体问题"
+  promise: "你持续提供的价值"
+  differentiation: "为什么值得相信你"
   primary_goal: "saves"
   pillars:
-    - "内容支柱一"
-    - "内容支柱二"
+    - "内容支柱 1"
+    - "内容支柱 2"
+    - "内容支柱 3"
   voice:
-    - "表达风格一"
-    - "表达风格二"
+    - "语气特点 1"
+    - "语气特点 2"
   truth_boundary:
-    - "不虚构亲身经历"
-    - "区分公开资料、官方信息、用户经历和待确认内容"
+    - "不虚构个人经历"
+    - "区分官方信息、公开观察和待确认事项"
 
 research_defaults:
-  source: "Apify → SocialDataX"
   result_limit: 15
-  test_result_limit: 20
   sort: "general"
   note_type: "all"
   publish_time: "all"

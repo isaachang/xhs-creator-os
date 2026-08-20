@@ -6,8 +6,8 @@
 
 ```text
 仿写任务
-数据源：Apify → SocialDataX
-原笔记标题：[SocialDataX 返回的原始标题](SocialDataX 返回的原始 note_url)
+数据源：本次实际数据源（Apify → SocialDataX / 本机 MediaCrawler → Rednote 或小红书）
+原笔记标题：[提供方返回的原始标题](提供方返回的原始 note_url)
 作者信息：[作者名称](作者主页 URL；没有时只显示作者名称)
 发布日期：日期；缺失时写“未知”
 笔记类型：图文 / 视频；缺失时写“未知”
@@ -20,7 +20,7 @@
 
 ~~~~text
 仿写任务
-数据源：Apify → SocialDataX
+数据源：本次实际数据源
 原笔记标题：……
 作者信息：……
 发布日期：……

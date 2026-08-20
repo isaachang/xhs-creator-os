@@ -1,6 +1,6 @@
 ---
 name: xhs-creator-os
-description: 用 SocialDataX 做小红书前期调研、单篇笔记仿写或多对象对比。支持完整样本、作者与互动数据、原始链接、详情缓存、对比正文，以及轻度/深度仿写两种后续模式。
+description: 用 Apify → SocialDataX 或本机 MediaCrawler 做小红书前期调研、单篇笔记仿写或多对象对比；统一返回原始链接、作者、互动数据与详情状态。
 ---
 
 # 小红书 Creator OS 总路由
@@ -19,6 +19,10 @@ Research 子 Skill 需要按需加载：
 - `references/evidence-boundary.md`
 - `references/account-context.md`
 - `skills/xhs-research/references/research-output.md`
+
+通过 `scripts/xhs_provider.py status` 判断数据源：有可用 Apify Key 时使用 `Apify → SocialDataX`；未配置 Key 时使用本机 MediaCrawler。用户明确指定某一数据源时优先遵从。Media 路径额外读取 `skills/xhs-research/references/local-mediacrawler.md`。
+
+若 Apify 已配置但套餐、Actor 或网络请求失败，不能静默切换到 Media；明确说明错误并提供“使用本机 MediaCrawler”的选项。
 
 ### 单篇笔记仿写
 
@@ -59,31 +63,62 @@ Compare 子 Skill 需要按需加载：
 - 账号定位只读取 `profile/account.yaml`，并遵守 `references/account-context.md`；不要自动加载创作中心复盘、竞品审图、复杂选题架构或其他未被请求的模块。
 - API Key 只从环境、被 Git 忽略的 `.env.local` 或 macOS Keychain 读取，绝不输出、写入报告、Prompt、聊天记录或 Git。
 - 只读取公开笔记，不发布、点赞、评论、关注或绕过平台控制。
-- 保留原始抓取记录，报告从规范化数据生成。
+- 保留原始抓取记录，报告从规范化数据生成。所有抓取记录都使用统一字段：`note_id`、`url`、`title`、`body`、`author_name`、`author_url`、`published_at`、`note_type`、赞/藏/评/转、`content_level`、`detail_status`、`query`、`source`、`raw`。
 - 第三方点赞、收藏、评论、转发是抓取时快照，不代表实时数据。
 - 缺失数据写“未知”，不猜测、不补零。
 - 调研元数据和分析内容可以使用 Markdown；可发布正文必须遵守 `references/copy-format.md`，使用纯文本代码框，代码框内禁止 `#`、项目符号、加粗符号或其他 Markdown 排版。
 - 用户提供初稿后要求优化、默认仿写、轻度仿写、深度仿写或生成对比正文，都属于可发布正文，必须执行字数限制；原始调研样本、元信息和内部分析不套用该限制。
 - 输出前使用 `scripts/validate_copy.py` 检查字数；超限时先压缩重复表达、装饰性形容词和非关键衔接，再重新检查，不能直接超限返回。
 
+## 首次初始化
+
+当用户首次安装后要求“配置”“初始化”或开始调研而两个数据源都不可用时，先运行 `python3 scripts/setup_mediacrawler.py --check`。Media 是无 Apify Key 时的首选本机数据路径；不要把未适配的上游 MediaCrawler 误判为已就绪。
+
+用户明确同意安装第三方依赖后，运行 `python3 scripts/setup_mediacrawler.py --install`。该命令会下载上游项目、应用 Creator OS 适配补丁并安装本机依赖；它不读取 API Key 或 Cookie。完成后运行 `media-auth`：若出现二维码，展示给用户并保持原进程等待扫码；若无二维码，说明登录态已可复用。
+
+首次初始化完成后，执行一次低风险关键词调研作为冒烟测试。不要在首次配置阶段自动抓取评论、媒体文件或大批量详情。
+
 ## 共享命令
 
-检查 API 配置，不暴露密钥：
+检查数据源配置，不暴露密钥：
 
 ```bash
-python3 scripts/xhs_api.py status
+python3 scripts/xhs_provider.py status
+```
+
+本机 Playwright 持久化浏览器会话（首次需要用户手动登录一次）：
+
+```bash
+./.venv/bin/python scripts/xhs_browser_session.py login
+./.venv/bin/python scripts/xhs_browser_session.py status
+```
+
+登录态保存在被 Git 忽略的 `data/browser-profile/`，不导出 Cookie，不写入研究记录。`status` 会在关闭后重新打开一个全新的上下文，检查首页是否仍要求登录；只有返回 `authenticated` 才算复用成功，返回 `login_required` 或 `security_blocked` 都不能继续抓取。小红书返回 `安全限制 / 300011` 时，属于站点安全阻断，不应把它误报成搜索结果为空。
+
+MediaCrawler 使用独立、被 Git 忽略的 Profile，不连接用户日常 Chrome。正常本机抓取默认后台运行；登录失效时只能启动一次 `media-auth` 会话并等待扫码，禁止自动连续重试或重复弹出浏览器。Agent 把临时二维码图片展示在 Codex，用户扫码后由同一进程校验登录态：
+
+```bash
+python3 scripts/xhs_provider.py media-auth --qr-output runs/latest/media-login-qr.png
+```
+
+用户要求抓取指定作者的收藏 Top-N 时，先扫描作者笔记卡片的互动快照，再按收藏排序，只读取 Top-N 的正文详情；不能把所有笔记详情都读取一遍：
+
+```bash
+python3 scripts/xhs_provider.py creator "作者主页完整 URL" --top 5 --scan-limit 120 \
+  --output runs/latest/creator-top.json
 ```
 
 搜索笔记：
 
 ```bash
-python3 scripts/xhs_api.py search "关键词" --source apify --limit 15 --output runs/latest/research.json
-python3 scripts/store.py import runs/latest/research.json --kind research --query "关键词" --source xhs-api
-python3 scripts/trend_report.py --days 7 --output runs/latest/trends.md
+python3 scripts/xhs_provider.py search "关键词" --source auto --limit 15 \
+  --sort-type general --content-type image --output runs/latest/research.json
 ```
+
+`content-type` 可选 `image`（默认图文）、`video`、`all`。Media 候选采集后必须由当前 Agent 动态筛选并读取所选详情，再生成正式 `research.json`；不能把候选卡片直接当最终研究结果。
 
 读取指定笔记：
 
 ```bash
-python3 scripts/xhs_api.py detail "完整笔记 URL" --source apify --output runs/latest/note-detail.json
+python3 scripts/xhs_provider.py detail "完整笔记 URL" --source auto --output runs/latest/note-detail.json
 ```

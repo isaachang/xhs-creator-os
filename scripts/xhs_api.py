@@ -146,7 +146,22 @@ def iter_items(value: Any) -> Iterable[dict[str, Any]]:
     yield value
 
 
-def normalize_record(item: dict[str, Any], source: str, query: str | None) -> dict[str, Any]:
+def normalize_note_type(value: Any) -> str:
+    normalized = str(value or "").lower()
+    if normalized in {"video", "1"}:
+        return "video"
+    if normalized in {"image", "images", "normal", "2"}:
+        return "image"
+    return "unknown"
+
+
+def normalize_record(
+    item: dict[str, Any],
+    source: str,
+    query: str | None,
+    *,
+    content_level: str = "summary",
+) -> dict[str, Any]:
     user = item.get("user") if isinstance(item.get("user"), dict) else {}
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
     note = item.get("note") if isinstance(item.get("note"), dict) else {}
@@ -157,15 +172,20 @@ def normalize_record(item: dict[str, Any], source: str, query: str | None) -> di
     # The fallback remains only for legacy providers that expose an ID/token pair.
     if not url and note_id and xsec_token and source != "apify":
         url = f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token={xsec_token}"
+    body = nested_first(item, note, names=("body", "bodyText", "summary", "desc", "description", "content", "text", "note_desc", "workDesc")) or ""
+    effective_content_level = content_level if content_level != "summary" or body else "card"
     record = {
         "note_id": str(note_id) if note_id is not None else None,
         "url": url,
         "title": nested_first(item, note, names=("title", "note_title", "noteTitle", "workTitle")) or "",
-        "body": nested_first(item, note, names=("body", "bodyText", "summary", "desc", "description", "content", "text", "note_desc", "workDesc")) or "",
+        "body": body,
         "author_id": first(item, "author_id", "authorId", "user_id", "userId", "accountUserid") or first(user, "user_id", "userId", "id") or first(author, "user_id", "userId", "id"),
         "author_name": first(item, "author_name", "authorName", "authorNickname", "nickname", "accountNickname", "author") or first(user, "nickname", "name") or first(author, "nickname", "name"),
         "author_url": first(item, "author_url", "authorUrl", "authorProfileUrl", "profile_url", "profileUrl", "user_url", "userUrl", "account_url", "accountUrl") or first(user, "url", "profile_url", "profileUrl", "user_url", "userUrl", "link") or first(author, "url", "profile_url", "profileUrl", "user_url", "userUrl", "link"),
         "published_at": nested_first(item, note, names=("published_at", "publishedAt", "publish_time", "publishTime", "createTime", "time", "workPublishTime")),
+        "note_type": normalize_note_type(nested_first(item, note, names=("note_type", "noteType", "type", "content_type", "contentType"))),
+        "content_level": effective_content_level,
+        "detail_status": "success" if content_level == "detail" else "not_requested",
         "captured_at": now_iso(),
         "query": query,
         "source": source,
@@ -178,8 +198,17 @@ def normalize_record(item: dict[str, Any], source: str, query: str | None) -> di
     return {key: value for key, value in record.items() if value is not None}
 
 
-def normalize_payload(value: Any, source: str, query: str | None) -> list[dict[str, Any]]:
-    records = [annotate_record(normalize_record(item, source, query), query) for item in iter_items(value)]
+def normalize_payload(
+    value: Any,
+    source: str,
+    query: str | None,
+    *,
+    content_level: str = "summary",
+) -> list[dict[str, Any]]:
+    records = [
+        annotate_record(normalize_record(item, source, query, content_level=content_level), query)
+        for item in iter_items(value)
+    ]
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for record in records:
@@ -403,7 +432,7 @@ def apify_search(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         timeout=min(args.timeout, 300),
     )
-    return normalize_payload(response, "apify", args.keyword)[: args.limit]
+    return normalize_payload(response, "apify", args.keyword, content_level="summary")[: args.limit]
 
 
 def apify_detail_request(args: argparse.Namespace, note_url: str) -> list[dict[str, Any]]:
@@ -422,7 +451,7 @@ def apify_detail_request(args: argparse.Namespace, note_url: str) -> list[dict[s
         },
         timeout=min(getattr(args, "timeout", 180), 300),
     )
-    records = normalize_payload(response, "apify", None)
+    records = normalize_payload(response, "apify", None, content_level="detail")
     if not records:
         raise ProviderError("SocialDataX returned no detail records")
     return records

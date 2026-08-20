@@ -4,7 +4,7 @@
 
 ```text
 调研方向
-数据源：Apify → SocialDataX
+数据源：本次实际数据源（Apify → SocialDataX / 本机 MediaCrawler → Rednote 或小红书）
 关键词：用户关键词
 排序：综合
 笔记类型：全部
@@ -24,7 +24,9 @@
 赞 X｜藏 X｜评 X｜转 X
 ```
 
-标题必须直接链接到 SocialDataX 返回的原始 URL，不能自行改成短链、404 链接或 canonical URL。
+标题必须直接链接到本次数据提供方返回的原始 URL，不能自行改成短链、404 链接或 canonical URL。
+
+笔记类型以记录中的 `note_type` 输出：`image` 为图文、`video` 为视频、其他值为“未知”。Media 和 Apify 都可能缺失该字段，缺失时不能猜测。
 
 ## 样本结束后的选项
 

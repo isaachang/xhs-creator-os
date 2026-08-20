@@ -1,223 +1,231 @@
-# XHS Creator OS
+# 小红书 Creator OS
 
-> 一个可适配不同账号的小红书内容运营 Skill：调研、仿写、图片生成与持续优化。
+> 给 Codex 使用的小红书内容工作流：调研 → 仿写 → 多对象对比 → 生图。
+>
+> 默认使用 Apify → SocialDataX；没有 API Key 时，可配置本机 MediaCrawler 作为备用数据路径。
 
-![Research](https://img.shields.io/badge/Research-SocialDataX-7c3aed)
-![Rewrite](https://img.shields.io/badge/Rewrite-Structured-0ea5e9)
-![License](https://img.shields.io/badge/License-MIT-green)
+Creator OS 是内容研究与创作辅助工具，不会自动发布、点赞、评论、关注或私信。
 
-## 它解决什么问题？
+---
 
-把分散的小红书内容工作串成一条可复用流程：
+## 它能做什么
 
-```text
-账号定位 → 方向调研 → 选题提炼 → 笔记仿写 → 图片生成 → 数据复盘 → 持续优化
-```
+| 能力 | 你可以怎么说 | 会得到什么 |
+| --- | --- | --- |
+| 调研 | `调研广州宠物友好酒店` | 原始链接、标题、作者、发布时间、互动快照、详情状态 |
+| 单篇仿写 | `仿写这个链接：<笔记链接>` | 原笔记信息、标题/钩子/CTA 选项与可发布正文 |
+| 多对象对比 | `对比天河 5 家宠物友好酒店` | 数据来源、评分表、五星正文与补充核验项 |
+| 博主拆解 | `抓这个博主收藏最高的 5 篇：<主页链接>` | 本次扫描范围内按收藏快照排序的 Top N 笔记详情 |
+| 生图 | `根据这篇正文做小红书知识卡` | 调用独立生图流程，并保留账号 IP 与参考资产 |
 
-当前 Skill 默认包含两条主路径：
-
-- **调研**：通过 Apify → SocialDataX 搜索公开笔记，完整返回标题、作者、互动数据和原始链接。
-- **仿写**：读取用户提供的笔记链接，检查缓存后读取正文信息，按账号定位生成默认、轻度或深度仿写。
-
-图片生成是可选能力，需要在你的 Agent 环境中另外配置一个可用的图片生成 Skill 或后端；本项目负责路由、账号 IP 适配和生成规则。
-
-## 快速开始
-
-### 1. 安装 Skill
-
-把本目录放到 Agent 能扫描的 Skill 目录，例如：
+## 工作流
 
 ```text
-<project>/.agents/skills/xhs-creator-os/
+用户需求
+  │
+  ├─ 调研 ───────────► xhs-research ─┬─ Apify → SocialDataX
+  │                                  └─ 本机 MediaCrawler
+  │
+  ├─ 链接仿写 ───────► xhs-rewrite ───► 优先复用本地详情缓存
+  │
+  ├─ 多对象对比 ─────► xhs-compare ───► 调研、归类、评分、发布正文
+  │
+  └─ 生图 / 审图 ────► xhs-image ─────► 独立图片生成与审图 Skill
 ```
 
-或者在当前项目中直接加载本目录的 `SKILL.md`。
+---
 
-### 2. 配置 Apify API Key
+## 第一次使用：先完成 Media 配置
 
-前往 [Apify Console](https://console.apify.com/) 创建或复制 API Key。
+Media 不需要 API Key。它是无 Apify Key 时的本机抓取路径，也能用于本机备用验证。
 
-本 Skill 已经内置默认的小红书数据 Actor：
+下载仓库并在 Codex 中打开该目录后，直接发送：
 
 ```text
-socialdatax~socialdatax-xhs-data-api
+帮我完成 xhs-creator-os 的首次初始化：优先配置 MediaCrawler，检查登录态，并做一次低风险调研测试。
 ```
 
-对应的 [SocialDataX XHS Actor](https://apify.com/socialdatax/socialdatax-xhs-data-api) 会被自动调用。正常使用时不需要在 Apify 页面手动选择 Actor，也不需要填写 Actor ID；用户只需要配置自己的 API Key。
-
-SocialDataX 按事件计费，实际能否调用取决于 Apify 当前套餐、Actor 权限和账户余额。余额不等同于套餐权限；如果出现“需要升级 Apify 账号”的提示，应先检查套餐权限。
-
-#### 方式 A：使用配置脚本（推荐）
-
-在 `xhs-creator-os` 目录下运行：
+Codex 会先执行：
 
 ```bash
-python3 scripts/setup_apify_key.py
+python3 scripts/setup_mediacrawler.py --check
 ```
 
-脚本会隐藏输入内容，并将 Key 写入 Skill 目录下的 `.env.local`。这个文件已经被 Git 忽略，只保存在用户本机。
-
-#### 方式 B：手动填写本地配置
-
-在 `xhs-creator-os/.env.local` 新建或编辑本地配置文件：
-
-```env
-APIFY_API_TOKEN=你的_Apify_API_Key
-```
-
-也可以使用内置脚本隐藏输入：
+如果 Media 未就绪，经你同意后执行：
 
 ```bash
-python3 scripts/setup_apify_key.py
+python3 scripts/setup_mediacrawler.py --install
 ```
 
-检查配置时只显示状态，不会显示 Key：
+初始化脚本会：
 
-```bash
-python3 scripts/xhs_api.py status
-```
+1. 下载指定版本的上游 MediaCrawler；
+2. 应用 Creator OS 的兼容适配；
+3. 创建独立 Python 环境；
+4. 安装依赖与 Playwright 浏览器运行环境；
+5. 输出下一步登录操作。
 
-如果配置正确，状态中会显示：
+### 作为用户，你只需要做什么
 
-```json
-{
-  "apify": {
-    "configured": true,
-    "actor": "socialdatax~socialdatax-xhs-data-api"
-  }
-}
-```
+| 场景 | 你需要做的事 |
+| --- | --- |
+| 首次安装 | 同意 Codex 下载第三方代码和本机依赖 |
+| 首次登录 / 登录过期 | 使用手机扫一次小红书或 Rednote 二维码 |
+| 平台要求验证码或滑块 | 完成一次临时可见验证 |
+| 日常使用 | 直接发送调研需求或笔记链接 |
 
-`.env.local` 已被 `.gitignore` 忽略，严禁提交到 GitHub。
+正常抓取使用独立登录目录并在后台运行：不会接管你的日常 Chrome，也不需要手动开启 Chrome CDP 或配置 Google Cloud。
 
-#### 更换 Actor（高级用法）
+> 登录失效或平台安全校验时，Codex 会展示一次临时二维码或提示可见验证；这不是每次抓取都会发生的步骤。
 
-默认不需要更换。如果你要测试其他兼容 Actor，可以通过环境变量临时覆盖默认值：
+---
 
-```bash
-APIFY_XHS_ACTOR="其他账号~其他actor名称" \
-python3 scripts/xhs_api.py status
-```
+## 配置账号定位
 
-也可以在当前 Terminal 会话中先设置：
-
-```bash
-export APIFY_XHS_ACTOR="其他账号~其他actor名称"
-```
-
-Actor ID 必须使用 `owner~actor-name` 格式。替换后的 Actor 还必须支持本 Skill 使用的 `search_notes` 和 `get_note_detail` 操作，否则搜索或笔记读取会失败。当前 `.env.local` 只读取 `APIFY_API_TOKEN`，不要把 `APIFY_XHS_ACTOR` 写进 `.env.local` 后期待它自动生效。
-
-### 3. 配置账号定位
-
-复制：
+复制模板：
 
 ```bash
 cp profile/account.example.yaml profile/account.yaml
 ```
 
-然后填写：
+然后编辑 `profile/account.yaml`，填写：
 
-```yaml
-account:
-  name: "你的账号名称"
-  handle: "你的账号主页或账号标识"
+- 账号定位与目标读者；
+- 内容支柱；
+- 语气与表达方式；
+- 真实性边界；
+- 默认调研设置。
 
-positioning:
-  identity: "你是谁，服务什么人"
-  audience:
-    - "核心受众"
-  promise: "你为受众解决什么问题"
-  pillars:
-    - "内容支柱一"
-    - "内容支柱二"
-```
+`profile/account.yaml` 是个人配置，不应上传到公开仓库。
 
-账号定位文件只在本机使用，不要提交真实账号策略或私人资料。
+## 可选：配置 Apify
 
-### 4. 配置账号 IP（可选）
+如果你有 Apify Key，可以使用 SocialDataX 获得更稳定、结构更完整的云端数据。
 
-如果账号有固定人物、宠物、吉祥物或视觉角色：
-
-- 把参考图放到 `assets/ip/refs/`
-- 在 `references/ip-adaptation.md` 写清楚角色特征、适用场景和负面约束
-- 在图片生成请求中启用 IP 适配
-
-没有 IP 时可以跳过这一步，图片生成仍可使用通用风格。
-
-### 5. 配置图片生成后端（可选）
-
-本项目不绑定唯一图片生成供应商。请在当前 Agent 环境中安装一个可用的图片生成 Skill 或后端，并按照该后端自己的配置方式设置：
-
-- 默认图片模型或后端
-- 图片保存目录
-- 参考图传入方式
-- 批量生成数量
-
-`references/image-generation.md` 是本项目的统一路由入口，不要求某个固定供应商名称。
-
-## 使用方式
-
-在 Agent 中加载 `SKILL.md` 后，可以直接说：
-
-```text
-帮我调研：广州天河宠物友好商场
-```
-
-```text
-帮我仿写：https://www.xiaohongshu.com/explore/...
-```
-
-```text
-根据这篇正文生成一组小红书图片卡片
-```
-
-## 常用命令
+复制本地配置模板：
 
 ```bash
-# 检查 API 状态
-python3 scripts/xhs_api.py status
-
-# 搜索笔记
-python3 scripts/xhs_api.py search "关键词" --source apify --limit 15 --output runs/latest/research.json
-
-# 读取指定笔记
-python3 scripts/xhs_api.py detail "完整笔记 URL" --source apify --output runs/latest/note-detail.json
+cp .env.example .env.local
 ```
 
-## 输出规则
+在 `.env.local` 中填写：
 
-- 调研默认返回 15 条完整样本，测试时可返回 20 条。
-- 每条样本保留原始链接、标题、作者和公开互动数据。
-- 笔记正文、默认仿写和优化稿：标题不超过 20 字，标题 + 正文 + 标签不超过 1000 字。
-- 相同笔记详情优先读取本地缓存，避免重复请求。
-- 只读取公开内容，不自动发布、点赞、评论或关注。
+```bash
+APIFY_API_TOKEN=你的_Apify_API_Key
+```
 
-## 安全说明
+默认 Actor 已经配置为：
 
-不要提交以下内容：
+```text
+socialdatax~socialdatax-xhs-data-api
+```
+
+不需要手动选择 Actor。只有想换其他 Actor 时，才填写：
+
+```bash
+APIFY_XHS_ACTOR=owner~actor-name
+```
+
+检查当前状态：
+
+```bash
+python3 scripts/xhs_provider.py status
+```
+
+数据源优先级：
+
+```text
+有可用 Apify Key → Apify → SocialDataX
+没有 Apify Key → 已配置的本机 MediaCrawler
+```
+
+如果 Apify 已配置但套餐、Actor 或网络调用失败，系统不会静默改用 Media；会说明原因并等待你明确选择。
+
+---
+
+## 日常使用
+
+在 Codex 中调用：
+
+```text
+$xhs-creator-os
+```
+
+然后直接说人话：
+
+| 你说 | 系统路径 |
+| --- | --- |
+| `调研广州宠物友好公园` | 搜索候选 → 按当前意图筛选 → 读取所选详情 → 返回正式样本 |
+| `仿写这个链接：<链接>` | 先查详情缓存，不足时读取公开详情，再生成仿写 |
+| `对比广州 5 家狗狗公园` | 优先复用缓存；不足时调研；输出评分表与发布正文 |
+| `抓这个博主收藏最高的 5 篇：<主页链接>` | 扫描作者卡片 → 按收藏快照排序 → 只读 Top N 详情 |
+| `根据正文做 6 张知识卡` | 路由到独立小红书生图流程 |
+
+---
+
+## 数据与输出原则
+
+- 调研样本保留上游给出的原始笔记 URL、作者与互动数据快照；
+- 互动数据不是实时数据，缺失字段显示“未知”，不补零；
+- `detail + success` 才是正文级来源；搜索卡片不能被当作完整正文；
+- 本机 Media 搜索会先采集候选，再结合本轮用户意图动态筛选，避免把异地或不相关内容直接返回；
+- 仿写与 Compare 优先复用本地详情缓存，减少重复抓取与 API 消耗；
+- 发布正文使用纯文本复制框，标题不超过 20 字，标题、正文、结尾和标签合计不超过 1000 字；
+- 费用、政策、准入限制等不确定信息放在正文外的“补充核验”中，而不是写成调研报告口吻。
+
+本地数据目录：
+
+```text
+data/note-detail-cache/   # 已读取笔记详情缓存
+data/creator-os.sqlite3  # 结构化历史数据
+runs/                    # 每次调研、对比、仿写的运行产物
+```
+
+这些目录默认被 Git 忽略。
+
+---
+
+## 项目结构
+
+```text
+xhs-creator-os/
+├── SKILL.md                         # 总路由与运行规则
+├── README.md                        # 用户安装与使用说明
+├── profile/
+│   ├── account.example.yaml          # 账号定位模板
+│   └── account.yaml                  # 本地个人配置（不上传）
+├── references/                       # 数据源、证据、文案共用规则
+├── skills/
+│   ├── xhs-research/                 # 调研与作者抓取
+│   ├── xhs-rewrite/                  # 单篇链接仿写
+│   ├── xhs-compare/                  # 多对象比较
+│   └── xhs-image/                    # 生图适配层
+├── scripts/
+│   ├── setup_mediacrawler.py         # Media 安装与体检
+│   ├── xhs_provider.py               # Apify / Media 路由
+│   └── validate_copy.py              # 发布文案字数校验
+└── third_party/mediacrawler/         # 上游适配补丁与许可证说明
+```
+
+---
+
+## 限制与合规
+
+- 只读取公开内容，不自动执行发布、互动或账号操作；
+- MediaCrawler 仅适合个人学习、研究与低频测试，请遵守其上游许可证和平台规则；
+- Media 可能受登录状态、验证码和站点风控影响；
+- 作者“收藏最高”仅代表本次扫描范围内的公开互动快照，不代表全历史绝对排名；
+- 上游抓取到的正文与互动数据不应被表述为你的亲身体验。
+
+## 隐私
+
+不要上传以下内容：
 
 ```text
 .env.local
 profile/account.yaml
 data/
 runs/
-个人账号资料
-私人 IP 原图
+MediaCrawler/browser_data/
+API Key、Cookie、二维码、订单信息、联系方式
 ```
-
-## 目录说明
-
-```text
-SKILL.md                         # 总路由
-references/research.md           # 调研清单
-references/rewrite.md            # 仿写清单
-references/data-sources.md       # API、缓存和链接规则
-references/image-generation.md   # 图片生成路由
-profile/account.example.yaml     # 账号定位模板
-scripts/                         # API 和数据处理脚本
-tests/                           # 脱敏测试
-```
-
-## License
-
-MIT

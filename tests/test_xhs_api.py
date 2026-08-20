@@ -43,6 +43,9 @@ def test_normalizes_apify_shape() -> None:
     assert records[0]["url"] == "https://example.test/note"
     assert records[0]["query"] == "带狗回国"
     assert records[0]["relevance_status"] == "relevant"
+    assert records[0]["note_type"] == "unknown"
+    assert records[0]["content_level"] == "summary"
+    assert records[0]["detail_status"] == "not_requested"
 
 
 def test_apify_uses_search_actor_contract(monkeypatch) -> None:
@@ -108,6 +111,19 @@ def test_normalizes_socialdatax_search_shape() -> None:
     assert records[0]["body"] == "搜索结果摘要"
     assert records[0]["likes"] == 12
     assert records[0]["url"].startswith("https://www.xiaohongshu.com/explore/social-1")
+    assert records[0]["content_level"] == "summary"
+
+
+def test_detail_normalization_marks_detail_content() -> None:
+    records = xhs_api.normalize_payload(
+        [{"note_id": "detail-1", "title": "正文", "desc": "完整正文", "type": "normal"}],
+        "apify",
+        None,
+        content_level="detail",
+    )
+    assert records[0]["note_type"] == "image"
+    assert records[0]["content_level"] == "detail"
+    assert records[0]["detail_status"] == "success"
 
 
 def test_apify_detail_uses_exact_note_url(monkeypatch) -> None:

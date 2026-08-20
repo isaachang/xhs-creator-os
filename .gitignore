@@ -1,4 +1,5 @@
 data/
+data/browser-profile/
 runs/
 *.sqlite3
 *.db
@@ -9,8 +10,6 @@ storage_state*.json
 .env.*
 profile/private/
 profile/account.yaml
-assets/ip/refs/*
-!assets/ip/refs/README.md
 .venv/
 .uv-cache/
 .uv-python/
