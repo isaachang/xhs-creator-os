@@ -284,12 +284,54 @@ def apify_note_type(value: int) -> str:
     return {0: "all", 1: "video", 2: "image"}.get(value, "all")
 
 
-def socialdatax_note_input(value: str) -> str:
-    """Adapt RedNote's web host for the Actor without changing returned source URLs."""
+XHSLINK_HOSTS = {"xhslink.com", "www.xhslink.com"}
+REDNOTE_HOSTS = {"rednote.com", "www.rednote.com"}
+XIAOHONGSHU_HOSTS = {"xiaohongshu.com", "www.xiaohongshu.com"}
+
+
+def canonicalize_xiaohongshu_url(value: str) -> str:
+    """Use the long Xiaohongshu explore route while preserving query parameters."""
     parsed = urllib.parse.urlsplit(value.strip())
-    if parsed.hostname and parsed.hostname.lower() in {"rednote.com", "www.rednote.com"}:
-        return urllib.parse.urlunsplit(parsed._replace(netloc="www.xiaohongshu.com"))
-    return value
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in XIAOHONGSHU_HOSTS:
+        return value.strip()
+    match = re.fullmatch(r"/discovery/item/([A-Za-z0-9_-]+)", parsed.path)
+    if not match:
+        return value.strip()
+    return urllib.parse.urlunsplit(parsed._replace(path=f"/explore/{match.group(1)}"))
+
+
+def socialdatax_note_input(value: str) -> str:
+    """Convert RedNote input to the long Xiaohongshu host/route for the Actor."""
+    parsed = urllib.parse.urlsplit(value.strip())
+    if parsed.hostname and parsed.hostname.lower() in REDNOTE_HOSTS:
+        value = urllib.parse.urlunsplit(parsed._replace(netloc="www.xiaohongshu.com"))
+    return canonicalize_xiaohongshu_url(value)
+
+
+def is_xhslink_url(value: str) -> bool:
+    parsed = urllib.parse.urlsplit(value.strip())
+    return (parsed.hostname or "").lower() in XHSLINK_HOSTS
+
+
+def resolve_xhslink_url(value: str, *, timeout: int = 30) -> str:
+    """Follow an xhslink redirect and return a long Xiaohongshu URL."""
+    request = urllib.request.Request(
+        value.strip(),
+        headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            resolved = response.geturl()
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise ProviderError(f"xhslink long-link resolution failed: {exc}") from exc
+    long_url = socialdatax_note_input(resolved)
+    parsed = urllib.parse.urlsplit(long_url)
+    if (parsed.hostname or "").lower() not in XIAOHONGSHU_HOSTS:
+        raise ProviderError("xhslink resolved to a non-Xiaohongshu URL")
+    if long_url.strip() == value.strip():
+        raise ProviderError("xhslink did not redirect to a long Xiaohongshu URL")
+    return long_url
 
 
 def note_cache_keys(value: str) -> set[str]:
@@ -364,17 +406,10 @@ def apify_search(args: argparse.Namespace) -> list[dict[str, Any]]:
     return normalize_payload(response, "apify", args.keyword)[: args.limit]
 
 
-def apify_detail(args: argparse.Namespace) -> list[dict[str, Any]]:
-    input_url = socialdatax_note_input(args.url)
-    if not getattr(args, "refresh", False):
-        cached = read_note_detail_cache(args.url, input_url)
-        if cached is not None:
-            print(json.dumps({"cache": "hit", "records": len(cached)}, ensure_ascii=False), file=sys.stderr)
-            return cached
+def apify_detail_request(args: argparse.Namespace, note_url: str) -> list[dict[str, Any]]:
     token = apify_token()
     if not token:
         raise ProviderError("APIFY_API_TOKEN is not set and no Apify token was found in the macOS Keychain")
-    ensure_socialdatax_access()
     actor = apify_actor_id()
     endpoint = f"{APIFY_API_ORIGIN}/acts/{urllib.parse.quote(actor, safe='~')}/run-sync-get-dataset-items"
     response = request_json(
@@ -383,13 +418,50 @@ def apify_detail(args: argparse.Namespace) -> list[dict[str, Any]]:
         headers={"Authorization": f"Bearer {token}"},
         payload={
             "operation": "get_note_detail",
-            "note_url": input_url,
+            "note_url": note_url,
         },
-        timeout=min(args.timeout, 300),
+        timeout=min(getattr(args, "timeout", 180), 300),
     )
     records = normalize_payload(response, "apify", None)
-    write_note_detail_cache(records, args.url, input_url)
+    if not records:
+        raise ProviderError("SocialDataX returned no detail records")
     return records
+
+
+def apify_detail(args: argparse.Namespace) -> list[dict[str, Any]]:
+    input_url = socialdatax_note_input(args.url)
+    if not getattr(args, "refresh", False):
+        cached = read_note_detail_cache(args.url, input_url)
+        if cached is not None:
+            print(json.dumps({"cache": "hit", "records": len(cached)}, ensure_ascii=False), file=sys.stderr)
+            return cached
+    ensure_socialdatax_access()
+    try:
+        records = apify_detail_request(args, input_url)
+        write_note_detail_cache(records, args.url, input_url)
+        return records
+    except ProviderError as initial_error:
+        if not is_xhslink_url(args.url):
+            raise
+        try:
+            long_url = resolve_xhslink_url(args.url, timeout=min(getattr(args, "timeout", 180), 30))
+        except ProviderError as resolution_error:
+            raise ProviderError(
+                f"xhslink request failed ({initial_error}); long-link resolution failed ({resolution_error})"
+            ) from resolution_error
+        if not getattr(args, "refresh", False):
+            cached = read_note_detail_cache(long_url)
+            if cached is not None:
+                print(json.dumps({"cache": "hit", "records": len(cached), "via": "xhslink-long-url"}, ensure_ascii=False), file=sys.stderr)
+                return cached
+        try:
+            records = apify_detail_request(args, long_url)
+        except ProviderError as fallback_error:
+            raise ProviderError(
+                f"xhslink request failed ({initial_error}); long-link fallback failed ({fallback_error})"
+            ) from fallback_error
+        write_note_detail_cache(records, args.url, input_url, long_url)
+        return records
 
 
 def run_search(args: argparse.Namespace) -> list[dict[str, Any]]:

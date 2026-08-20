@@ -141,6 +141,62 @@ def test_apify_detail_adapts_rednote_host_for_actor(monkeypatch) -> None:
     assert captured["payload"]["note_url"] == "https://www.xiaohongshu.com/explore/social-1?xsec_token=token"
 
 
+def test_apify_detail_retries_xhslink_with_resolved_long_url(monkeypatch) -> None:
+    captured_urls = []
+    short_url = "http://xhslink.com/o/example"
+    long_url = "https://www.xiaohongshu.com/explore/social-1?xsec_token=token"
+
+    def fake_request(url, **kwargs):
+        note_url = kwargs["payload"]["note_url"]
+        captured_urls.append(note_url)
+        if note_url == short_url:
+            raise xhs_api.ProviderError("short actor failure")
+        return [{"note_id": "social-1", "note_url": long_url, "summary": "详情摘要"}]
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "test-token")
+    monkeypatch.setattr(xhs_api, "ensure_socialdatax_access", lambda: None)
+    monkeypatch.setattr(xhs_api, "request_json", fake_request)
+    monkeypatch.setattr(xhs_api, "resolve_xhslink_url", lambda value, timeout: long_url)
+    args = type("Args", (), {"url": short_url, "timeout": 180, "refresh": True})()
+
+    records = xhs_api.apify_detail(args)
+
+    assert captured_urls == [short_url, long_url]
+    assert records[0]["note_id"] == "social-1"
+
+
+def test_canonicalizes_discovery_item_route() -> None:
+    value = "https://www.xiaohongshu.com/discovery/item/social-1?xsec_token=token"
+    assert xhs_api.canonicalize_xiaohongshu_url(value) == "https://www.xiaohongshu.com/explore/social-1?xsec_token=token"
+
+
+def test_apify_detail_reports_both_xhslink_failures(monkeypatch) -> None:
+    short_url = "http://xhslink.com/o/example"
+
+    def fake_request(url, **kwargs):
+        raise xhs_api.ProviderError("short actor failure")
+
+    monkeypatch.setenv("APIFY_API_TOKEN", "test-token")
+    monkeypatch.setattr(xhs_api, "ensure_socialdatax_access", lambda: None)
+    monkeypatch.setattr(xhs_api, "request_json", fake_request)
+    monkeypatch.setattr(
+        xhs_api,
+        "resolve_xhslink_url",
+        lambda value, timeout: (_ for _ in ()).throw(xhs_api.ProviderError("redirect timeout")),
+    )
+    args = type("Args", (), {"url": short_url, "timeout": 180, "refresh": True})()
+
+    try:
+        xhs_api.apify_detail(args)
+    except xhs_api.ProviderError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected ProviderError")
+
+    assert "short actor failure" in message
+    assert "redirect timeout" in message
+
+
 def test_deduplicates_records() -> None:
     payload = [{"id": "same", "title": "A"}, {"id": "same", "title": "B"}]
     records = xhs_api.normalize_payload(payload, "test", "query")
