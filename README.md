@@ -16,7 +16,7 @@ Creator OS 是内容研究与创作辅助工具，不会自动发布、点赞、
 | 单篇仿写 | `仿写这个链接：<笔记链接>` | 原笔记信息、标题/钩子/CTA 选项与可发布正文 |
 | 多对象对比 | `对比天河 5 家宠物友好酒店` | 数据来源、评分表、五星正文与补充核验项 |
 | 博主拆解 | `抓这个博主收藏最高的 5 篇：<主页链接>` | 本次扫描范围内按收藏快照排序的 Top N 笔记详情 |
-| 生图 | `根据这篇正文做小红书知识卡` | 调用独立生图流程，并保留账号 IP 与参考资产 |
+| 生图 | `根据这篇正文做小红书知识卡` | 使用内置图片卡模板，输出封面优先的系列配图 |
 
 ## 工作流
 
@@ -30,7 +30,7 @@ Creator OS 是内容研究与创作辅助工具，不会自动发布、点赞、
   │
   ├─ 多对象对比 ─────► xhs-compare ───► 调研、归类、评分、发布正文
   │
-  └─ 生图 / 审图 ────► xhs-image ─────► 独立图片生成与审图 Skill
+  └─ 生图 / 审图 ────► xhs-image ─────► 内置 Baoyu 图片卡模板 → Codex imagegen
 ```
 
 ---
@@ -163,6 +163,35 @@ $xhs-creator-os
 
 ---
 
+## 生图模板：已内置，无需另装 Baoyu
+
+本仓库已携带完整的 `baoyu-xhs-images` 单个 Skill。打开项目后，Codex 会自动发现它；不需要再单独下载 Baoyu 全套 Skills。
+
+它提供：
+
+- 12 种视觉风格、8 种信息版式和 3 组配色；
+- 内容拆页、封面优先、封面作为后续卡片视觉锚点；
+- 完整 Prompt 先落盘、失败卡片单独重生成、审图规则；
+- 使用当前 Codex 可用的图片生成后端，优先走 `imagegen`。
+
+你自己的角色或狗狗参考图**不会随仓库提供**。如需保持账号 IP，请自行放入：
+
+```text
+assets/ip/refs/                 # 动漫/插画 IP 参考图
+assets/ip/real-dog/refs/        # 已授权的真实狗狗参考图
+```
+
+默认使用：
+
+```text
+$xhs-creator-os
+根据这篇正文做 6 张小红书知识卡
+```
+
+`xhs-image` 负责读取你的账号与 IP 路由规则；内置的 `baoyu-xhs-images` 负责视觉方案、拆页、Prompt 和生图工作流。第三方来源与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
 ## 数据与输出原则
 
 - 调研样本保留上游给出的原始笔记 URL、作者与互动数据快照；
@@ -200,6 +229,9 @@ xhs-creator-os/
 │   ├── xhs-rewrite/                  # 单篇链接仿写
 │   ├── xhs-compare/                  # 多对象比较
 │   └── xhs-image/                    # 生图适配层
+├── .agents/skills/
+│   └── baoyu-xhs-images/              # 内置图片卡模板、视觉预设与生成流程
+├── assets/ip/refs/                    # 用户自行添加的 IP 参考图（不含个人素材）
 ├── scripts/
 │   ├── setup_mediacrawler.py         # Media 安装与体检
 │   ├── xhs_provider.py               # Apify / Media 路由
@@ -224,6 +256,7 @@ xhs-creator-os/
 ```text
 .env.local
 profile/account.yaml
+.baoyu-skills/
 data/
 runs/
 MediaCrawler/browser_data/
