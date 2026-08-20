@@ -1,8 +1,8 @@
 # SocialDataX 数据源
 
-默认正式数据源是 Apify 上的 SocialDataX Actor，用于小红书关键词搜索和指定笔记详情读取。
+Creator OS 通过 `scripts/xhs_provider.py` 选择数据源：有可用 Apify Key 时默认使用 Apify 上的 SocialDataX Actor；未配置 Key 时使用已安装、已登录的本机 MediaCrawler。用户明确指定提供方时优先遵从。
 
-用户明确选择时可使用本机 MediaCrawler 精筛作为登录态驱动的降级路径；它不属于 `--source auto`，细则见 `../skills/xhs-research/references/local-mediacrawler.md`。
+若 Apify 已配置但套餐、Actor 或网络请求失败，不能自动跳到 MediaCrawler；必须说明原因并由用户明确选择。MediaCrawler 细则见 `../skills/xhs-research/references/local-mediacrawler.md`。
 
 ## 两个操作
 
@@ -23,7 +23,7 @@
 运行：
 
 ```bash
-python3 scripts/xhs_api.py status
+python3 scripts/xhs_provider.py status
 ```
 
 适配器按以下顺序读取，不显示密钥内容：
@@ -50,7 +50,11 @@ SocialDataX Actor 需要 Apify 付费计划。遇到免费套餐限制时，必�
 
 ```text
 note_id, url, title, body, author_id, author_name, author_url,
-published_at, captured_at, query, source, likes, saves, comments, shares, raw
+published_at, note_type, content_level, detail_status, captured_at,
+query, source, likes, saves, comments, shares, raw
 ```
 
 第三方互动数据是抓取时快照。缺失值写“未知”，不猜测、不补零。
+
+- `content_level`：`card`（搜索卡片）、`summary`（搜索摘要）、`detail`（详情请求结果）。
+- `detail_status`：`not_requested`、`success`、`unavailable`。只有 `detail + success` 才能作为正文级内容的优先来源。

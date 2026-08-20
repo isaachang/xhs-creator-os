@@ -11,6 +11,9 @@ import argparse
 import json
 from pathlib import Path
 
+from store import DEFAULT_DB, connect, import_research
+from xhs_api import write_note_detail_cache
+
 
 def load_array(path: Path) -> list[dict]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -46,9 +49,24 @@ def main() -> None:
         candidate = dict(candidates[note_id])
         detail = details.get(note_id)
         if detail:
-            for field in ("url", "title", "body", "author_id", "author_name", "author_url", "published_at", "likes", "saves", "comments", "shares", "raw"):
+            for field in (
+                "url", "title", "body", "author_id", "author_name", "author_url",
+                "published_at", "note_type", "content_level", "detail_status",
+                "likes", "saves", "comments", "shares", "raw",
+            ):
                 if detail.get(field) not in (None, ""):
                     candidate[field] = detail[field]
+            # Older local detail files predate the shared content-level fields.
+            # A successfully matched detail still has stronger provenance than
+            # its search card, so normalize it here instead of leaving it as
+            # card-level data forever.
+            candidate["content_level"] = str(detail.get("content_level") or "detail")
+            candidate["detail_status"] = str(detail.get("detail_status") or "success")
+        else:
+            # The record was selected for detail verification but no usable
+            # detail returned. Keep the card rather than pretending it has
+            # a full body; Compare and Rewrite can request it later.
+            candidate["detail_status"] = "unavailable"
         candidate["relevance_status"] = "directly_relevant"
         candidate["relevance_reasons"] = decision.get("reasons") or []
         final.append(candidate)
@@ -61,6 +79,48 @@ def main() -> None:
     screening_path = args.output.with_name(f"{args.output.stem}.screening.json")
     screening_path.write_text(json.dumps(selection, ensure_ascii=False, indent=2)
 )
+    manifest_path = args.output.with_name(f"{args.output.stem}.manifest.json")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "media",
+                "operation": "research",
+                "candidate_count": len(candidates),
+                "detail_count": len(details),
+                "returned_count": len(final),
+                "sources": sorted({str(item.get("source") or "mediacrawler") for item in final}),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    # Store successful local details under the same note-id cache used by the
+    # Apify adapter. Future Rewrite/Compare calls can reuse them regardless of
+    # which provider supplied the initial search result.
+    if details:
+        cache_details = []
+        for detail in details.values():
+            cached_detail = dict(detail)
+            cached_detail.setdefault("note_type", "unknown")
+            cached_detail.setdefault("content_level", "detail")
+            cached_detail.setdefault("detail_status", "success")
+            cache_details.append(cached_detail)
+        write_note_detail_cache(cache_details)
+
+    # Make final research discoverable by later conversations. Candidate-only
+    # files are intentionally not imported because they are not final samples.
+    with connect(DEFAULT_DB) as conn:
+        for record in final:
+            import_research(
+                conn,
+                record,
+                str(record.get("source") or "mediacrawler"),
+                str(record.get("query") or "") or None,
+                None,
+            )
+        conn.commit()
     print(json.dumps({"candidate_count": len(candidates), "detail_count": len(details), "selected_count": len(final)}, ensure_ascii=False))
 
 
