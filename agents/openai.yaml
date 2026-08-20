@@ -1,0 +1,4 @@
+interface:
+  display_name: "小红书 Creator OS"
+  short_description: "SocialDataX 调研、单篇仿写、多对象对比与小红书配图流程"
+  default_prompt: "Use $xhs-creator-os to research Xiaohongshu notes, compare multiple objects, rewrite a user-provided note URL, or route an explicit image-card request to the image skill."

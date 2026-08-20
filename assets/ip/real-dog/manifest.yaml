@@ -1,0 +1,41 @@
+version: 1
+mode: real-photo
+display_name: 真实狗狗写实模式
+description: 用户确认的真实白色西高地身份参考图。仅在用户选择真实写实模式时使用。
+identity_reference_policy:
+  preserve:
+    - face shape
+    - eye spacing and color
+    - ear shape
+    - black nose and mouth structure
+    - white coat texture and length
+    - body proportions
+    - leg, paw, and tail structure
+  may_vary:
+    - background
+    - location
+    - lighting
+    - pose
+    - expression
+    - props requested by the user
+  forbid:
+    - anime or cartoon rendering
+    - extra animals
+    - extra limbs, paws, ears, eyes, or tails
+    - text, watermark, logo, or decorative border
+refs:
+  - id: real-dog-master
+    file: refs/00-real-dog-master.png
+    role: primary identity reference
+  - id: real-dog-front-head
+    file: refs/01-front-head-shoulders.png
+    role: face, eyes, nose, ears, and coat reference
+  - id: real-dog-front-full
+    file: refs/02-front-three-quarter-full.png
+    role: front three-quarter body and limb reference
+  - id: real-dog-side-full
+    file: refs/03-side-full.png
+    role: side profile, backline, tail, and body reference
+  - id: real-dog-natural-half
+    file: refs/04-natural-expression-half.png
+    role: natural expression and half-body reference

@@ -1,0 +1,2 @@
+# Optional local-only dependency for the Playwright browser fallback.
+playwright>=1.40.0
