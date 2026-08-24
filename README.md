@@ -177,22 +177,22 @@ Compare 先展示来源样本与百分制评分分析，再输出可直接发布
 | Notion | Bold | Chalkboard |
 | --- | --- | --- |
 | ![Notion](assets/style-previews/01-notion.png) | ![Bold](assets/style-previews/02-bold.png) | ![Chalkboard](assets/style-previews/03-chalkboard.png) |
-| `notion` | `bold` | `chalkboard` |
+
 
 | Screen Print | Fresh | Study Notes |
 | --- | --- | --- |
 | ![Screen Print](assets/style-previews/04-screen-print.png) | ![Fresh](assets/style-previews/05-fresh.png) | ![Study Notes](assets/style-previews/06-study-notes.png) |
-| `screen-print` | `fresh` | `study-notes` |
+
 
 | Minimal | Warm | Sketch Notes |
 | --- | --- | --- |
 | ![Minimal](assets/style-previews/07-minimal.png) | ![Warm](assets/style-previews/08-warm.png) | ![Sketch Notes](assets/style-previews/09-sketch-notes.png) |
-| `minimal` | `warm` | `sketch-notes` |
+
 
 | Cute | Retro | Pop |
 | --- | --- | --- |
 | ![Cute](assets/style-previews/10-cute.png) | ![Retro](assets/style-previews/11-retro.png) | ![Pop](assets/style-previews/12-pop.png) |
-| `cute` | `retro` | `pop` |
+
 <!-- STYLE_PREVIEWS_END -->
 
 ---
