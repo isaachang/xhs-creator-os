@@ -1,0 +1,89 @@
+diff --git a/tools/cdp_browser.py b/tools/cdp_browser.py
+--- a/tools/cdp_browser.py
++++ b/tools/cdp_browser.py
+@@ -315,26 +315,50 @@ class CDPBrowserManager:
+         Connect to browser via CDP
+         """
+         try:
+             if config.CDP_CONNECT_EXISTING:
+-                # Existing browser remote debugging in Chrome 136+ does not expose
+-                # /json/version. Connect directly and wait for user confirmation.
+-                ws_url = f"ws://localhost:{self.debug_port}/devtools/browser"
+-                utils.logger.info(f"[CDPBrowserManager] Connecting to existing browser via CDP: {ws_url}")
+-                utils.logger.info(
+-                    "[CDPBrowserManager] Please check your browser for a confirmation dialog and accept it"
+-                )
+-                try:
+-                    self.browser = await playwright.chromium.connect_over_cdp(
+-                        ws_url, timeout=config.BROWSER_LAUNCH_TIMEOUT * 1000
+-                    )
+-                except Exception as direct_error:
+-                    utils.logger.warning(
+-                        "[CDPBrowserManager] Direct existing-browser CDP connection failed: "
+-                        f"{direct_error}. Trying /json/version discovery..."
+-                    )
++                # Creator OS launches and owns this browser itself. Unlike a
++                # user-supplied Chrome, its loopback `/json/version` endpoint
++                # is available and returns the complete UUID-bearing WebSocket
++                # URL. Connecting to `/devtools/browser` without that UUID can
++                # hang until timeout on recent Chromium, which previously made
++                # the XHS worker open a second fallback browser.
++                if config.CREATOR_OS_SHARED_BROWSER:
+                     ws_url = await self._get_browser_websocket_url(self.debug_port)
+                     utils.logger.info(
+-                        f"[CDPBrowserManager] Connecting to existing browser via discovered CDP: {ws_url}"
++                        f"[CDPBrowserManager] Connecting to Creator OS shared browser via CDP: {ws_url}"
+                     )
+                     self.browser = await playwright.chromium.connect_over_cdp(
+                         ws_url, timeout=config.BROWSER_LAUNCH_TIMEOUT * 1000
+                     )
++                else:
++                    # Preserve the upstream fallback for a manually supplied
++                    # Chrome, whose endpoint can be restricted by Chrome 136+.
++                    ws_url = f"ws://localhost:{self.debug_port}/devtools/browser"
++                    utils.logger.info(f"[CDPBrowserManager] Connecting to existing browser via CDP: {ws_url}")
++                    utils.logger.info(
++                        "[CDPBrowserManager] Please check your browser for a confirmation dialog and accept it"
++                    )
++                    try:
++                        self.browser = await playwright.chromium.connect_over_cdp(
++                            ws_url, timeout=config.BROWSER_LAUNCH_TIMEOUT * 1000
++                        )
++                    except Exception as direct_error:
++                        utils.logger.warning(
++                            "[CDPBrowserManager] Direct existing-browser CDP connection failed: "
++                            f"{direct_error}. Trying /json/version discovery..."
++                        )
++                        ws_url = await self._get_browser_websocket_url(self.debug_port)
++                        utils.logger.info(
++                            f"[CDPBrowserManager] Connecting to existing browser via discovered CDP: {ws_url}"
++                        )
++                        self.browser = await playwright.chromium.connect_over_cdp(
++                            ws_url, timeout=config.BROWSER_LAUNCH_TIMEOUT * 1000
++                        )
+             else:
+                 # For launched browser, get WebSocket URL first
+                 ws_url = await self._get_browser_websocket_url(self.debug_port)
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -818,6 +818,16 @@ class XiaoHongShuCrawler(AbstractCrawler):
+ 
+         except Exception as e:
+-            utils.logger.error(f"[XiaoHongShuCrawler] CDP mode launch failed, falling back to standard mode: {e}")
++            if config.CREATOR_OS_SHARED_BROWSER:
++                # Creator OS intentionally owns one persistent, isolated
++                # browser/Profile. A fallback browser changes the session and
++                # fingerprint, can trigger extra Keychain prompts, and makes a
++                # verified login look lost. Fail closed so the router can give
++                # a truthful session error instead of silently opening another
++                # browser.
++                utils.logger.error(
++                    "[XiaoHongShuCrawler] Creator OS shared-browser CDP connection failed; "
++                    f"standard-browser fallback is disabled: {e}"
++                )
++                raise RuntimeError("Creator OS shared browser CDP connection failed; standard-browser fallback is disabled") from e
++            utils.logger.error(f"[XiaoHongShuCrawler] CDP mode launch failed, falling back to standard mode: {e}")
+             # Fall back to standard mode
+             chromium = playwright.chromium
+             return await self.launch_browser(chromium, playwright_proxy, user_agent, headless)

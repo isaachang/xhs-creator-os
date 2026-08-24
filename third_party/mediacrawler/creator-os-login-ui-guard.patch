@@ -1,0 +1,40 @@
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -60,15 +60,12 @@ class XiaoHongShuLogin(AbstractLogin):
+         Verify login status using dual-check: UI elements and Cookies.
+         """
+-        # 1. Priority check: Check if the "Me" (Profile) node appears in the sidebar
++        # 1. Rednote renders "Me" for anonymous visitors too. Only its
++        # explicit signed-in marker is valid UI evidence of a login.
+         try:
+-            # Domestic Xiaohongshu labels the item “我”; Rednote uses “Me”.
+-            # Both sites retain a profile link in their logged-in sidebars.
+-            user_profile_selector = (
+-                "xpath=//a[contains(@href, '/user/profile/')]"
+-                "//span[normalize-space()='我' or normalize-space()='Me']"
+-            )
+-            if await self.context_page.is_visible(user_profile_selector, timeout=500):
+-                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by profile navigation.")
++            logged_marker = self.context_page.locator("#global[data-logged='1']")
++            if await logged_marker.count() and await logged_marker.is_visible(timeout=500):
++                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by explicit page marker.")
+                 self.login_confirmed = True
+                 return True
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -269,14 +269,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
+         This is only used for that unknown state; an explicit API logout still
+         requires QR login.
+         """
+-        selector = (
+-            "xpath=//a[contains(@href, '/user/profile/')]"
+-            "//span[normalize-space()='我' or normalize-space()='Me']"
+-        )
+         try:
+-            return await self.context_page.is_visible(selector, timeout=1_000)
++            logged_marker = self.context_page.locator("#global[data-logged='1']")
++            return bool(await logged_marker.count()) and await logged_marker.is_visible(timeout=1_000)
+         except Exception:
+             return False

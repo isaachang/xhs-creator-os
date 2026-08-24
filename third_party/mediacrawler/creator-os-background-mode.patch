@@ -1,0 +1,50 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -91,8 +91,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
+-            # Choose launch mode based on configuration
+-            if config.ENABLE_CDP_MODE:
++            # Creator OS background tasks must never open a visible Chrome
++            # window. They use the same dedicated persistent profile through
++            # Playwright directly, without reserving a CDP debugging port.
++            background_mode = os.environ.get("CREATOR_OS_BACKGROUND_MODE") == "1"
++            use_cdp = config.ENABLE_CDP_MODE and not background_mode
++            if use_cdp:
+                 utils.logger.info("[XiaoHongShuCrawler] Launching browser using CDP mode")
+                 self.browser_context = await self.launch_browser_with_cdp(
+@@ -105,7 +110,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
+-                utils.logger.info("[XiaoHongShuCrawler] Launching browser using standard mode")
++                utils.logger.info(
++                    "[XiaoHongShuCrawler] Launching browser using standard mode%s",
++                    " (Creator OS background)" if background_mode else "",
++                )
+                 # Launch a browser context.
+                 chromium = playwright.chromium
+@@ -713,16 +721,21 @@ class XiaoHongShuCrawler(AbstractCrawler):
+-            browser_context = await chromium.launch_persistent_context(
+-                user_data_dir=user_data_dir,
+-                accept_downloads=True,
+-                headless=headless,
+-                proxy=playwright_proxy,  # type: ignore
+-                viewport={
+-                    "width": 1920,
+-                    "height": 1080
+-                },
+-                user_agent=user_agent,
+-            )
++            launch_options = {
++                "user_data_dir": user_data_dir,
++                "accept_downloads": True,
++                "headless": headless,
++                "proxy": playwright_proxy,
++                "viewport": {"width": 1920, "height": 1080},
++                "user_agent": user_agent,
++            }
++            # Creator OS supplies the local Chrome binary for background mode
++            # when available. It remains headless and only opens the dedicated
++            # MediaCrawler profile, never the user's daily browser profile.
++            executable_path = os.environ.get("CREATOR_OS_BROWSER_EXECUTABLE", "").strip()
++            if executable_path:
++                launch_options["executable_path"] = executable_path
++            browser_context = await chromium.launch_persistent_context(**launch_options)  # type: ignore[arg-type]
+             return browser_context

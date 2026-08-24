@@ -1,0 +1,101 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -126,12 +126,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             # Create a client to interact with the Xiaohongshu website.
+             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+             login_probe = await self.xhs_client.probe_login()
++            interactive_auth = os.environ.get("CREATOR_OS_INTERACTIVE_AUTH") == "1"
+             utils.logger.info(
+                 "[XiaoHongShuCrawler] Login probe before task: state=%s reason=%s",
+                 login_probe.state,
+                 login_probe.reason,
+             )
+             page_session_confirmed = await self._browser_session_confirmed()
+             if login_probe.authenticated:
+                 pass
+-            elif login_probe.state == "unauthenticated":
++            elif login_probe.state == "unauthenticated" or interactive_auth:
+                 if background_mode:
+                     raise PlatformAccessError(
+                         "专用 MediaCrawler Profile 已明确未登录；"
+@@ -151,7 +152,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 self._apply_site(site_from_url(self.context_page.url), persist=True)
+                 self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+                 post_login_probe = await self.xhs_client.probe_login()
+-                if not post_login_probe.authenticated and not await self._browser_session_confirmed():
++                if (
++                    not post_login_probe.authenticated
++                    and not login_obj.login_confirmed
++                    and not await self._browser_session_confirmed()
++                ):
+                     raise PlatformAccessError(
+                         "登录后仍无法确认会话状态"
+                         f"（{post_login_probe.state}:{post_login_probe.reason}）；"
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -48,10 +48,13 @@ class XiaoHongShuLogin(AbstractLogin):
+         self.context_page = context_page
+         self.login_phone = login_phone
+         self.cookie_str = cookie_str
++        self.login_confirmed = False
+ 
+     @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+-    async def check_login_state(self, no_logged_in_session: Optional[str]) -> bool:
++    async def check_login_state(
++        self, no_logged_in_session: Optional[str], baseline_cookie_names: Optional[set[tuple[str, str]]] = None
++    ) -> bool:
+         """
+         Verify login status using dual-check: UI elements and Cookies.
+         """
+@@ -66,6 +69,7 @@ class XiaoHongShuLogin(AbstractLogin):
+             )
+             if await self.context_page.is_visible(user_profile_selector, timeout=500):
+                 utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by profile navigation.")
++                self.login_confirmed = True
+                 return True
+         except Exception:
+             pass
+@@ -83,8 +87,20 @@ class XiaoHongShuLogin(AbstractLogin):
+         # If web_session has changed, consider the login successful
+         if current_web_session and current_web_session != no_logged_in_session:
+             utils.logger.info("[XiaoHongShuLogin.check_login_state] Login status confirmed by Cookie (web_session changed).")
++            self.login_confirmed = True
+             return True
+ 
++        # Rednote may not expose the domestic ``web_session`` cookie. A new
++        # platform cookie only counts after the QR element disappears; page
++        # load itself can add anonymous cookies before the user scans.
++        current_cookie_names = {
++            (str(item.get("domain") or ""), str(item.get("name") or "")) for item in current_cookie
++        }
++        if baseline_cookie_names is not None and current_cookie_names != baseline_cookie_names:
++            try:
++                qr_still_visible = await self.context_page.locator("xpath=//img[@class='qrcode-img']").is_visible(
++                    timeout=300
++                )
++            except Exception:
++                qr_still_visible = False
++            if not qr_still_visible:
++                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by QR completion and cookie change.")
++                self.login_confirmed = True
++                return True
++
+         return False
+@@ -208,6 +224,9 @@ class XiaoHongShuLogin(AbstractLogin):
+         _, cookie_dict = utils.convert_cookies(current_cookie)
+         no_logged_in_session = cookie_dict.get("web_session")
++        baseline_cookie_names = {
++            (str(item.get("domain") or ""), str(item.get("name") or "")) for item in current_cookie
++        }
+ 
+         # The upstream Image.show() opens an independent Preview window that
+@@ -217,7 +236,7 @@ class XiaoHongShuLogin(AbstractLogin):
+ 
+         utils.logger.info(f"[XiaoHongShuLogin.login_by_qrcode] waiting for scan code login, remaining time is 120s")
+         try:
+-            await self.check_login_state(no_logged_in_session)
++            await self.check_login_state(no_logged_in_session, baseline_cookie_names)
+         except RetryError:
+             utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] Login xiaohongshu failed by qrcode login method ...")

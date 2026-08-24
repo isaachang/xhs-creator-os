@@ -1,0 +1,45 @@
+diff --git a/tools/creator_os_qr_window.py b/tools/creator_os_qr_window.py
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/tools/creator_os_qr_window.py
+@@ -0,0 +1,39 @@
++"""A small local QR window that Creator OS closes after successful login."""
++
++from __future__ import annotations
++
++import base64
++import sys
++from io import BytesIO
++
++
++def main() -> int:
++    payload = sys.stdin.buffer.read().strip()
++    if not payload:
++        return 2
++
++    try:
++        import tkinter as tk
++        from PIL import Image, ImageTk
++
++        image = Image.open(BytesIO(base64.b64decode(payload)))
++        image.load()
++        root = tk.Tk()
++        root.title("小红书登录")
++        root.resizable(False, False)
++        root.attributes("-topmost", True)
++
++        photo = ImageTk.PhotoImage(image)
++        frame = tk.Frame(root, padx=16, pady=14)
++        frame.pack()
++        tk.Label(frame, text="请使用小红书或 Rednote 扫码登录").pack(pady=(0, 10))
++        tk.Label(frame, image=photo).pack()
++        tk.Label(frame, text="登录成功后将自动关闭", fg="#666666").pack(pady=(10, 0))
++        root.mainloop()
++        return 0
++    except Exception:
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())

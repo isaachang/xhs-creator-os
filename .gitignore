@@ -1,6 +1,7 @@
 data/
 data/browser-profile/
 runs/
+/测试/
 *.sqlite3
 *.db
 *.cookie
@@ -9,6 +10,7 @@ storage_state*.json
 .env
 .env.*
 profile/private/
+profile/account.yaml
 .venv/
 .uv-cache/
 .uv-python/
@@ -16,3 +18,4 @@ profile/private/
 __pycache__/
 *.pyc
 .DS_Store
+third_party/mediacrawler/runtime/

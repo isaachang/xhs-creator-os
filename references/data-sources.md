@@ -42,6 +42,7 @@ SocialDataX Actor 需要 Apify 付费计划。遇到免费套餐限制时，必�
 - 同一笔记 ID 或同一 URL 哈希已有非空结果时，直接读取缓存，不重复发起付费请求。
 - 只有用户明确要求刷新，才使用 `--refresh`。
 - 研究原始记录保持不变，报告从规范化数据生成。
+- 详情缓存采用用户触发的惰性清理：用户执行 Research、Detail、Details 或作者采集时，路由检查 `data/research-cache-state.json`；距离上次使用达到 14×24 小时后，只清理 `data/note-detail-cache/*.json`。不使用定时任务，不清理 `runs/`、`creator-os.sqlite3` 或浏览器 Profile。
 - 缓存命中和新请求 API 返回的详情都进入同一套仿写输出协议；缓存只影响是否发起详情请求，不影响元信息、标题/钩子/CTA 选项、轻度/深度选项或正文格式。
 - Compare 的简化策略不维护复杂分页或 Actor 侧排除 ID；首轮 15 条结果不足时，先按实际对象数量输出并提示用户，只有用户明确确认扩大搜索后才用更大的 `limit`（例如 25）重新搜索，并在本地按 `note_id`、原始 URL 或标题+作者做基础去重。
 - `runs/latest/research.json` 是当前运行结果；不要把一次运行结果误认为所有查询条件的长期缓存。研究记录仍应通过 `scripts/store.py` 导入，Compare 只基于本次实际可用结果生成。

@@ -23,6 +23,7 @@ description: 先调用小红书 Research 获取公开样本，再对多个酒店
 执行前读取：
 
 - `../../references/data-sources.md`
+- `../../references/cache-routing.md`
 - `../../references/evidence-boundary.md`
 - `../../references/copy-format.md`
 - `../../references/account-context.md`
@@ -32,7 +33,7 @@ description: 先调用小红书 Research 获取公开样本，再对多个酒店
 ## 执行流程
 
 1. 识别对比主题、明确指定的对象数量、对象名称、用户目标和比较维度；用户未指定数量时，不得自行推断目标数量。
-2. 优先检查本地历史 Research 结果和统一详情缓存，按主题、地区、对象类型和筛选条件判断是否兼容。
+2. 优先按 `../../references/cache-routing.md` 检查本地历史 Research 结果和统一详情缓存；必须按主题、地区、对象类型、筛选条件、样本量与时效判断兼容，部分相似缓存只能辅助补搜，不能直接替代本轮对比。
 3. 缓存足够形成对比时直接复用，不调用 API；缓存不足或不存在时，才调用 `xhs-research`，首轮固定使用 `limit=15`，由 Provider Router 自动选 Apify 或 Media。
 4. 合并缓存与本轮结果，按 `note_id`、原始 URL 或标题+作者去重，并按实际酒店、商场或其他实体归类；已有完整详情的笔记不重复请求。
 5. 首轮结果未达到用户明确指定的对象数量时，先按当前实际对象数量生成正文，并在正文外单独提示缺口；不得自动扩大到 25 条。

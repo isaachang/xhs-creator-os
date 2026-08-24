@@ -1,0 +1,225 @@
+diff --git a/media_platform/xhs/client.py b/media_platform/xhs/client.py
+--- a/media_platform/xhs/client.py
++++ b/media_platform/xhs/client.py
+@@ -19,6 +19,7 @@
+ 
+ import asyncio
+ import json
++from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+ from urllib.parse import quote, urlencode
+ 
+@@ -53,6 +54,24 @@ from .extractor import XiaoHongShuExtractor
+ from .playwright_sign import sign_with_xhshow
+ 
+ 
++@dataclass(frozen=True)
++class LoginProbe:
++    """The result of a non-mutating login check.
++
++    ``unknown`` intentionally differs from ``unauthenticated``: temporary
++    network, signing, rate-limit, or security responses must not open a fresh
++    QR-login window and overwrite a still-valid persistent session.
++    """
++
++    state: str
++    reason: str
++    http_status: Optional[int] = None
++
++    @property
++    def authenticated(self) -> bool:
++        return self.state == "authenticated"
++
++
+ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
+@@ -289,19 +308,53 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
+         Returns:
+             bool: True if logged in, False otherwise
+         """
+-        utils.logger.info("[XiaoHongShuClient.pong] Begin to check login state...")
+-        ping_flag = False
++        probe = await self.probe_login()
++        utils.logger.info(
++            "[XiaoHongShuClient.pong] Login probe state=%s reason=%s http_status=%s",
++            probe.state,
++            probe.reason,
++            probe.http_status,
++        )
++        return probe.authenticated
++
++    async def probe_login(self) -> LoginProbe:
++        """Classify a session without treating transient failures as logout.
++
++        The result contains no cookie, URL query, or response body values, so
++        it is safe for the Creator OS diagnostic log.
++        """
++        uri = "/api/sns/web/v1/user/selfinfo"
+         try:
+-            self_info: Dict = await self.query_self()
+-            if self_info and self_info.get("data", {}).get("result", {}).get("success"):
+-                ping_flag = True
+-        except Exception as e:
+-            utils.logger.error(
+-                f"[XiaoHongShuClient.pong] Check login state failed: {e}, and try to login again..."
++            headers = await self._pre_headers(uri, params={})
++            async with make_async_client(proxy=self.proxy) as client:
++                response = await client.get(f"{self._host}{uri}", headers=headers)
++        except Exception as exc:
++            utils.logger.warning(
++                "[XiaoHongShuClient.probe_login] state=unknown reason=request_error error_type=%s",
++                type(exc).__name__,
+             )
+-            ping_flag = False
+-        utils.logger.info(f"[XiaoHongShuClient.pong] Login state result: {ping_flag}")
+-        return ping_flag
++            return LoginProbe("unknown", "request_error")
++
++        if response.status_code in (401, 403):
++            return LoginProbe("unauthenticated", f"http_{response.status_code}", response.status_code)
++        if response.status_code != 200:
++            return LoginProbe("unknown", f"http_{response.status_code}", response.status_code)
++
++        try:
++            payload = response.json()
++        except ValueError:
++            return LoginProbe("unknown", "invalid_json", response.status_code)
++
++        payload_dict = payload if isinstance(payload, dict) else {}
++        data = payload_dict.get("data", {})
++        result = data.get("result", {}) if isinstance(data, dict) else {}
++        if (
++            payload_dict.get("success") is True
++            or data.get("success") is True
++            or result.get("success") is True
++        ):
++            return LoginProbe("authenticated", "selfinfo_success", response.status_code)
++
++        response_code = payload_dict.get("code")
++        if str(response_code) == "0" and isinstance(data, dict):
++            return LoginProbe("authenticated", "selfinfo_code_0", response.status_code)
++        if str(response_code) in {str(self.SECURITY_LIMIT_CODE), str(self.IP_ERROR_CODE)}:
++            return LoginProbe("unknown", f"platform_{response_code}", response.status_code)
++        if result.get("success") is False:
++            return LoginProbe("unauthenticated", "selfinfo_explicit_false", response.status_code)
++        utils.logger.warning(
++            "[XiaoHongShuClient.probe_login] state=unknown reason=unexpected_payload "
++            "response_code=%s success=%s data_type=%s data_keys=%s result_keys=%s",
++            response_code,
++            payload_dict.get("success"),
++            type(data).__name__,
++            sorted(data.keys()) if isinstance(data, dict) else [],
++            sorted(result.keys()) if isinstance(result, dict) else [],
++        )
++        return LoginProbe("unknown", "unexpected_payload", response.status_code)
+ 
+     async def update_cookies(self, browser_context: BrowserContext, urls: Optional[list[str]] = None):
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -118,7 +118,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
+ 
+             # Create a client to interact with the Xiaohongshu website.
+             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+-            if not await self.xhs_client.pong():
++            login_probe = await self.xhs_client.probe_login()
++            utils.logger.info(
++                "[XiaoHongShuCrawler] Login probe before task: state=%s reason=%s",
++                login_probe.state,
++                login_probe.reason,
++            )
++            if login_probe.state == "unauthenticated":
+                 login_obj = XiaoHongShuLogin(
+                     login_type=config.LOGIN_TYPE,
+                     login_phone="",  # input your phone number
+@@ -133,6 +139,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 await self._detect_site_from_profile()
+                 self._apply_site(site_from_url(self.context_page.url), persist=True)
+                 self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
++                post_login_probe = await self.xhs_client.probe_login()
++                if not post_login_probe.authenticated:
++                    raise PlatformAccessError(
++                        "登录后仍无法确认会话状态"
++                        f"（{post_login_probe.state}:{post_login_probe.reason}）；"
++                        "已停止本次任务，未重复打开二维码。"
++                    )
++            elif login_probe.state != "authenticated":
++                raise PlatformAccessError(
++                    "登录状态暂时无法验证"
++                    f"（{login_probe.reason}）；已停止本次任务，未自动打开二维码。"
++                )
+ 
+             crawler_type_var.set(config.CRAWLER_TYPE)
+             if config.CRAWLER_TYPE == "search":
+@@ -152,15 +170,22 @@ class XiaoHongShuCrawler(AbstractCrawler):
+     def _profile_site_path(self) -> Path:
+-        profile_name = (
+-            f"cdp_{config.USER_DATA_DIR % config.PLATFORM}"
+-            if config.ENABLE_CDP_MODE
+-            else config.USER_DATA_DIR % config.PLATFORM
+-        )
+-        return Path(os.getcwd()) / "browser_data" / profile_name / "creator_os_site.json"
++        return self._persistent_profile_dir() / "creator_os_site.json"
++
++    def _persistent_profile_dir(self) -> Path:
++        """Use one Creator OS profile even when CDP falls back to Playwright.
++
++        Earlier versions stored CDP cookies in ``cdp_xhs_user_data_dir`` but
++        stored fallback cookies in ``xhs_user_data_dir``. A transient CDP port
++        failure therefore looked like a lost login. Keep the existing CDP
++        profile name as the single durable location to avoid forcing a new QR
++        scan for current users.
++        """
++        profile_name = f"cdp_{config.USER_DATA_DIR % config.PLATFORM}"
++        return Path(os.getcwd()) / "browser_data" / profile_name
+ 
+     def _preferred_site(self) -> str:
+         mode = str(getattr(config, "XHS_SITE_MODE", "auto")).lower()
+@@ -703,7 +728,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
+         if config.SAVE_LOGIN_STATE:
+             # feat issue #14
+             # we will save login state to avoid login every time
+-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
++            user_data_dir = str(self._persistent_profile_dir())
+             browser_context = await chromium.launch_persistent_context(
+                 user_data_dir=user_data_dir,
+                 accept_downloads=True,
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -51,27 +51,27 @@ class XiaoHongShuLogin(AbstractLogin):
+         self.cookie_str = cookie_str
+ 
+     @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+-    async def check_login_state(self, no_logged_in_session: str) -> bool:
++    async def check_login_state(self, no_logged_in_session: Optional[str]) -> bool:
+         """
+         Verify login status using dual-check: UI elements and Cookies.
+         """
+         # 1. Priority check: Check if the "Me" (Profile) node appears in the sidebar
+         try:
+-            # Selector for elements containing "Me" text with a link pointing to the profile
+-            # XPath Explanation: Find a span with text "Me" inside an anchor tag (<a>) 
+-            # whose href attribute contains "/user/profile/"
+-            user_profile_selector = "xpath=//a[contains(@href, '/user/profile/')]//span[text()='我']"
+-            
+-            # Set a short timeout since this is called within a retry loop
+-            is_visible = await self.context_page.is_visible(user_profile_selector, timeout=500)
+-            if is_visible:
+-                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login status confirmed by UI element ('Me' button).")
++            # Domestic Xiaohongshu labels the item “我”; Rednote uses “Me”.
++            # Both sites retain a profile link in their logged-in sidebars.
++            user_profile_selector = (
++                "xpath=//a[contains(@href, '/user/profile/')]"
++                "//span[normalize-space()='我' or normalize-space()='Me']"
++            )
++            if await self.context_page.is_visible(user_profile_selector, timeout=500):
++                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by profile navigation.")
+                 return True
+         except Exception:
+             pass
+ 
+         # 2. Alternative: Check for CAPTCHA prompt
+-        if "请通过验证" in await self.context_page.content():
++        page_content = await self.context_page.content()
++        if "请通过验证" in page_content or "Please verify" in page_content:
+             utils.logger.info("[XiaoHongShuLogin.check_login_state] CAPTCHA appeared, please verify manually.")

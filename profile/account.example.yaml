@@ -1,0 +1,31 @@
+version: 1
+
+account:
+  name: "你的账号名称"
+  handle: ""
+
+positioning:
+  identity: "一句话说明你是谁，以及你帮助谁解决什么问题"
+  audience:
+    - "目标读者 1"
+    - "目标读者 2"
+  audience_situation: "读者当前最常遇到的具体问题"
+  promise: "你持续提供的价值"
+  differentiation: "为什么值得相信你"
+  primary_goal: "saves"
+  pillars:
+    - "内容支柱 1"
+    - "内容支柱 2"
+    - "内容支柱 3"
+  voice:
+    - "语气特点 1"
+    - "语气特点 2"
+  truth_boundary:
+    - "不虚构个人经历"
+    - "区分官方信息、公开观察和待确认事项"
+
+research_defaults:
+  result_limit: 15
+  sort: "general"
+  note_type: "all"
+  publish_time: "all"

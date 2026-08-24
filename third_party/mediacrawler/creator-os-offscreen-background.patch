@@ -1,0 +1,54 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -91,14 +91,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
+-            # Creator OS background tasks must never open a visible Chrome
+-            # window. They use the same dedicated persistent profile through
+-            # Playwright directly, without reserving a CDP debugging port.
++            # Creator OS runs a real dedicated Chrome Profile in an off-screen
++            # 1x1 window. Rednote rejects the saved session in true headless
++            # mode, while this keeps the normal Chrome fingerprint without
++            # showing or controlling the user's daily browser.
+             background_mode = os.environ.get("CREATOR_OS_BACKGROUND_MODE") == "1"
+-            use_cdp = config.ENABLE_CDP_MODE and not background_mode
++            use_cdp = config.ENABLE_CDP_MODE
+             if use_cdp:
+-                utils.logger.info("[XiaoHongShuCrawler] Launching browser using CDP mode")
++                utils.logger.info(
++                    "[XiaoHongShuCrawler] Launching browser using CDP mode%s",
++                    " (Creator OS off-screen background)" if background_mode else "",
++                )
+                 self.browser_context = await self.launch_browser_with_cdp(
+                     playwright,
+                     playwright_proxy_format,
+                     self.user_agent,
+-                    headless=config.CDP_HEADLESS,
++                    headless=False if background_mode else config.CDP_HEADLESS,
+                 )
+diff --git a/tools/browser_launcher.py b/tools/browser_launcher.py
+--- a/tools/browser_launcher.py
++++ b/tools/browser_launcher.py
+@@ -128,12 +128,23 @@ class BrowserLauncher:
+             "--disable-infobars",  # Disable info bars
+         ]
+ 
++        # Creator OS needs a genuine Chrome window for Rednote's persisted
++        # login state, but background tasks must not interrupt the user.
++        # Keep the separate crawler Profile in an off-screen 1x1 window.
++        creator_os_offscreen = os.environ.get("CREATOR_OS_BACKGROUND_MODE") == "1"
++
+         # Headless mode
+         if headless:
+             args.extend([
+                 "--headless=new",  # Use new headless mode
+                 "--disable-gpu",
+             ])
++        elif creator_os_offscreen:
++            args.extend([
++                "--window-position=-32000,-32000",
++                "--window-size=1,1",
++                "--force-device-scale-factor=1",
++            ])
+         else:
+             # Extra arguments for non-headless mode
+             args.extend([

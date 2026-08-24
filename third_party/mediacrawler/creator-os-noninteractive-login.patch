@@ -1,0 +1,30 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -136,6 +136,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             if login_probe.authenticated:
+                 pass
+             elif login_probe.state == "unauthenticated":
++                if background_mode:
++                    raise PlatformAccessError(
++                        "专用 MediaCrawler Profile 已明确未登录；"
++                        "后台调研不会自动弹出二维码。请先运行可见登录初始化后再重试。"
++                    )
+                 login_obj = XiaoHongShuLogin(
+                     login_type=config.LOGIN_TYPE,
+                     login_phone="",  # input your phone number
+@@ -161,10 +166,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                     "continuing with the confirmed dedicated browser session."
+                 )
+             else:
+-                raise PlatformAccessError(
+-                    "登录状态暂时无法验证"
+-                    f"（{login_probe.reason}）；已停止本次任务，未自动打开二维码。"
++                utils.logger.warning(
++                    "[XiaoHongShuCrawler] API login probe was inconclusive "
++                    "(%s); continuing without QR and letting the requested "
++                    "operation determine availability.",
++                    login_probe.reason,
+                 )
+ 
+             crawler_type_var.set(config.CRAWLER_TYPE)

@@ -1,0 +1,12 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -160,7 +160,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
+             page_session_confirmed = await self._browser_session_confirmed()
+             if login_probe.authenticated:
+                 pass
+-            elif login_probe.state == "unauthenticated" or interactive_auth:
++            elif login_probe.state == "unauthenticated" or (interactive_auth and not page_session_confirmed):
+                 if background_mode:
+                     raise PlatformAccessError(
+                         "专用 MediaCrawler Profile 已明确未登录；"

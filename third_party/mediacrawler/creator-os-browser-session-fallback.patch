@@ -1,0 +1,59 @@
+diff --git a/media_platform/xhs/core.py b/media_platform/xhs/core.py
+--- a/media_platform/xhs/core.py
++++ b/media_platform/xhs/core.py
+@@ -123,7 +123,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 login_probe.state,
+                 login_probe.reason,
+             )
+-            if login_probe.state == "unauthenticated":
++            page_session_confirmed = await self._browser_session_confirmed()
++            if login_probe.authenticated:
++                pass
++            elif login_probe.state == "unauthenticated":
+                 login_obj = XiaoHongShuLogin(
+                     login_type=config.LOGIN_TYPE,
+                     login_phone="",  # input your phone number
+@@ -139,14 +141,19 @@ class XiaoHongShuCrawler(AbstractCrawler):
+                 self._apply_site(site_from_url(self.context_page.url), persist=True)
+                 self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+                 post_login_probe = await self.xhs_client.probe_login()
+-                if not post_login_probe.authenticated:
++                if not post_login_probe.authenticated and not await self._browser_session_confirmed():
+                     raise PlatformAccessError(
+                         "登录后仍无法确认会话状态"
+                         f"（{post_login_probe.state}:{post_login_probe.reason}）；"
+                         "已停止本次任务，未重复打开二维码。"
+                     )
+-            elif login_probe.state != "authenticated":
++            elif page_session_confirmed:
++                utils.logger.warning(
++                    "[XiaoHongShuCrawler] API login probe was inconclusive; "
++                    "continuing with the confirmed dedicated browser session."
++                )
++            else:
+                 raise PlatformAccessError(
+                     "登录状态暂时无法验证"
+                     f"（{login_probe.reason}）；已停止本次任务，未自动打开二维码。"
+@@ -204,6 +211,22 @@ class XiaoHongShuCrawler(AbstractCrawler):
+         site = site_from_cookie_domains([str(item.get("domain") or "") for item in cookies])
+         self._apply_site(site, persist=True)
+ 
++    async def _browser_session_confirmed(self) -> bool:
++        """Confirm the signed-in navigation without reading cookie values.
++
++        Rednote can return an inconclusive ``selfinfo`` API response in a
++        headless context even while its dedicated browser Profile is valid.
++        This is only used for that unknown state; an explicit API logout still
++        requires QR login.
++        """
++        selector = (
++            "xpath=//a[contains(@href, '/user/profile/')]"
++            "//span[normalize-space()='我' or normalize-space()='Me']"
++        )
++        try:
++            return await self.context_page.is_visible(selector, timeout=1_000)
++        except Exception:
++            return False
++
+     async def search(self) -> None:
+         """Search cards first; fetch note details only when explicitly enabled."""

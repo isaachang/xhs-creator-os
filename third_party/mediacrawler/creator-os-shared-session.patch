@@ -1,0 +1,104 @@
+diff --git a/config/base_config.py b/config/base_config.py
+--- a/config/base_config.py
++++ b/config/base_config.py
+@@ -17,6 +17,9 @@
+ # 详细许可条款请参阅项目根目录下的LICENSE文件。
+ # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
+ 
++import os
++
++
+ # Basic configuration
+ PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
+ 
+@@ -66,7 +69,7 @@ ENABLE_CDP_MODE = True
+ 
+ # CDP 调试端口，用于与浏览器通信
+ # 如果端口被占用，系统会自动尝试下一个可用端口
+-CDP_DEBUG_PORT = 9223
++CDP_DEBUG_PORT = int(os.environ.get("CREATOR_OS_CDP_PORT", "9223"))
+ 
+ # 自定义浏览器路径（可选）
+ # 如果为空，系统会自动检测 Chrome/Edge 的安装路径
+@@ -86,7 +89,7 @@ BROWSER_LAUNCH_TIMEOUT = 60
+ # 用户需要在 Chrome 中开启远程调试：chrome://inspect/#remote-debugging
+ # 或者使用命令行参数启动 Chrome：--remote-debugging-port=9222
+ # 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
+-CDP_CONNECT_EXISTING = False
++CDP_CONNECT_EXISTING = os.environ.get("CREATOR_OS_CDP_CONNECT_EXISTING") == "1"
+ 
+ # 程序结束时是否自动关闭浏览器
+ # 设置为 False 可以保持浏览器运行，方便调试
+diff --git a/tools/cdp_browser.py b/tools/cdp_browser.py
+--- a/tools/cdp_browser.py
++++ b/tools/cdp_browser.py
+@@ -441,6 +441,15 @@ class CDPBrowserManager:
+         Args:
+             force: Whether to force cleanup browser process (ignoring AUTO_CLOSE_BROWSER config)
+         """
++        # Creator OS workers attach to a long-running dedicated browser. They
++        # do not own that browser or its persistent profile, so exiting one
++        # search/detail command must only release Python references.
++        if config.CDP_CONNECT_EXISTING:
++            self.browser_context = None
++            self.browser = None
++            utils.logger.info("[CDPBrowserManager] Released Creator OS shared browser connection")
++            return
++
+         try:
+             # Close browser context
+             if self.browser_context:
+diff --git a/media_platform/xhs/login.py b/media_platform/xhs/login.py
+--- a/media_platform/xhs/login.py
++++ b/media_platform/xhs/login.py
+@@ -53,7 +53,7 @@ class XiaoHongShuLogin(AbstractLogin):
+         self.cookie_str = cookie_str
+         self.login_confirmed = False
+ 
+-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
++    @retry(stop=stop_after_attempt(120), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+     async def check_login_state(
+         self, no_logged_in_session: Optional[str], baseline_cookie_names: Optional[set[tuple[str, str]]] = None
+     ) -> bool:
+@@ -89,24 +89,6 @@ class XiaoHongShuLogin(AbstractLogin):
+             self.login_confirmed = True
+             return True
+ 
+-        # Rednote may not expose the domestic ``web_session`` cookie. A new
+-        # platform cookie only counts after the QR element disappears; page
+-        # load itself can add anonymous cookies before the user scans.
+-        current_cookie_names = {
+-            (str(item.get("domain") or ""), str(item.get("name") or "")) for item in current_cookie
+-        }
+-        if baseline_cookie_names is not None and current_cookie_names != baseline_cookie_names:
+-            try:
+-                qr_still_visible = await self.context_page.locator("xpath=//img[@class='qrcode-img']").is_visible(
+-                    timeout=300
+-                )
+-            except Exception:
+-                qr_still_visible = False
+-            if not qr_still_visible:
+-                utils.logger.info("[XiaoHongShuLogin.check_login_state] Login confirmed by QR completion and cookie change.")
+-                self.login_confirmed = True
+-                return True
+-
+         return False
+ 
+     async def begin(self):
+@@ -210,7 +192,7 @@ class XiaoHongShuLogin(AbstractLogin):
+                 selector=qrcode_img_selector
+             )
+             if not base64_qrcode_img:
+-                sys.exit()
++                raise RuntimeError("未找到小红书/Rednote 二维码；请检查登录页面是否已打开。")
+ 
+         # get not logged session
+         current_cookie = await self.browser_context.cookies()
+@@ -230,7 +212,7 @@ class XiaoHongShuLogin(AbstractLogin):
+             await self.check_login_state(no_logged_in_session, baseline_cookie_names)
+         except RetryError:
+             utils.logger.info("[XiaoHongShuLogin.login_by_qrcode] Login xiaohongshu failed by qrcode login method ...")
+-            sys.exit()
++            raise RuntimeError("二维码登录未在 120 秒内确认；请重新执行可见登录初始化。")
+         finally:
+             self._close_creator_os_qrcode_window(qr_window)

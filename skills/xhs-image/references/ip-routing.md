@@ -13,24 +13,36 @@
 
 ## 动漫 IP 资产
 
-每张图只选择与该卡片最匹配的一张表情参考，不要同时传入全部表情图：
+资产索引见 `assets/ip/refs/manifest.yaml`。其中 `style-anchor.png` 是全局风格锚点，表情图按内容语义选择。每张图只选择与该卡片最匹配的一张表情参考，不要同时传入全部表情图：
 
 | 内容情绪/场景 | 参考图 |
 | --- | --- |
+| 感动、温暖、被帮助 | `expression-moved.png` |
+| 吃瓜、围观、事实核对 | `expression-gossip.png` |
 | 疲劳、休息、作息、长途出行 | `expression-sleepy.png` |
-| 踩坑、焦虑、被拒、注意事项 | `expression-aggrieved.png` |
 | 反常识、风险、突发提醒 | `expression-surprised.png` |
-| 禁忌、错误做法、避坑警告 | `expression-angry.png` |
+| 警惕、注意、安全提醒 | `expression-alert.png` |
+| 无语、无奈、出乎意料 | `expression-speechless.png` |
+| 撒娇、求助、轻松互动 | `expression-coy.png` |
 | 日常、互动、轻松技巧、结尾 CTA | `expression-playful.png` |
+| 害羞、尴尬、小心翼翼 | `expression-shy.png` |
+| 饮食、想吃、食物诱惑 | `expression-hungry.png` |
+| 期待、等待、预告、好奇 | `expression-expectant.png` |
+| 禁忌、错误做法、避坑警告 | `expression-angry.png` |
+| 踩坑、焦虑、被拒、注意事项 | `expression-aggrieved.png` |
+| 成功、做对了、结果展示 | `expression-proud.png` |
+| 疑惑、不确定、误区 | `expression-confused.png` |
+| 伤心、失落、遗憾、不舒服 | `expression-sad.png` |
+| 俏皮、小技巧、轻松收尾 | `expression-wink.png` |
 
 ## 调用规则
 
-1. 先调用 `baoyu-xhs-images` 分析内容、拆页并选择视觉方案。
+1. 先由 `xhs-image` 按 `references/planning-output.md` 输出正文分析和封面确认；再读取 `third_party/baoyu-xhs-images` 执行已确认的生成方案。
 2. 每张完整 Prompt 必须在生成前保存到 `prompts/NN-*.md`。
-3. 第 1 张使用与封面钩子匹配的表情图或确认过的真实狗狗身份参考。
-4. 后续卡片以第 1 张通过审查的成图作为系列锚点。
+3. 第 1 张使用与封面标题/主题匹配的表情图或确认过的真实狗狗身份参考；动漫风格可同时参考 `style-anchor.png` 的风格特征，但不能把全部表情图传入后端。
+4. 第 1 张必须经过独立审查 Agent PASS 后，后续卡片才能使用该成图作为系列锚点。
 5. 小红书默认 3:4；尺寸变化不改变狗狗角色设定。
-6. 错字、角色漂移或结构错误必须写新 Prompt 并重新生成，禁止在位图上修补。
+6. 生理结构错误、重复/缺失肢体或明显肢体粘连必须写新 Prompt 并重新生成，禁止在位图上修补；文字、排版和场景不属于独立生理结构审查。
 
 ## 角色边界
 
